@@ -411,6 +411,25 @@ export const ReviewPage: React.FC = () => {
       setValidationError('That demo scenario is no longer available.');
       return;
     }
+
+    const hasExistingWork = Boolean(
+      title.trim() ||
+      content.trim() ||
+      author.trim() ||
+      campaign ||
+      report ||
+      editingRecordId
+    );
+
+    if (
+      hasExistingWork &&
+      !window.confirm(
+        'Load this sample? It will replace the current editor fields. Any review already saved in Approvals will remain saved.'
+      )
+    ) {
+      return;
+    }
+
     setTitle(example.title);
     setContentType(example.contentType);
     setCampaign(example.campaign);
@@ -426,7 +445,6 @@ export const ReviewPage: React.FC = () => {
     setEditingRecordId(null);
     setRevisionFeedback('');
   };
-
   const clearDraft = () => {
     setTitle('');
     setContentType(CONTENT_TYPES[0]);
@@ -677,42 +695,108 @@ export const ReviewPage: React.FC = () => {
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {storageError}
           </p>
         )}
+        <div className="mt-5 border-t border-stone-200 pt-4">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-obsidian">
+              Not sure what to enter? Start with a sample.
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-stone-600">
+              Choose an example to fill the form, then click Analyse Content.
+              BrandLens AI will run its existing local rules and evidence checks.
+              Results are not generated from prewritten sample reports.
+            </p>
+          </div>
 
-        <div className="mt-4 flex flex-col gap-3 border-t border-stone-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-[9px] font-mono font-semibold uppercase tracking-wider text-stone-500">Load example</span>
-            {DEMO_SCENARIOS.map((example) => (
-              <button
-                key={example.id}
-                type="button"
-                onClick={() => loadExample(example.id)}
-                className="border-b border-stone-300 px-1 py-1 text-[10px] text-stone-600 hover:border-copper hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
-              >
-                {example.id === 'needs-review' ? 'Needs review'
-                  : example.id === 'evidence-review' ? 'Evidence gaps'
-                    : 'Clean approval'}
-              </button>
-            ))}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {DEMO_SCENARIOS.map((example) => {
+              const sampleDetails =
+                example.id === 'needs-review'
+                  ? {
+                      title: 'Needs review',
+                      description:
+                        'Explore a sample designed to demonstrate potential brand-risk findings.',
+                    }
+                  : example.id === 'evidence-review'
+                    ? {
+                        title: 'Evidence gaps',
+                        description:
+                          'Explore how claims and approved-source evidence are presented for review.',
+                      }
+                    : {
+                        title: 'Baseline example',
+                        description:
+                          'Start with a reference example and inspect what the active rules detect.',
+                      };
+
+              const SampleIcon =
+                example.id === 'needs-review'
+                  ? AlertTriangle
+                  : example.id === 'evidence-review'
+                    ? FileSearch
+                    : CheckCircle2;
+
+              return (
+                <button
+                  key={example.id}
+                  type="button"
+                  onClick={() => loadExample(example.id)}
+                  aria-label={`Load ${sampleDetails.title} into the content review form`}
+                  className="group flex min-h-36 flex-col justify-between gap-4 rounded-sm border border-stone-300 bg-ivory-50 p-3 text-left transition-colors hover:border-copper hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
+                >
+                  <span className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-stone-300 bg-white text-copper-800">
+                      <SampleIcon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-obsidian">
+                        {sampleDetails.title}
+                      </span>
+                      <span className="mt-1 block text-[10px] leading-relaxed text-stone-600">
+                        {sampleDetails.description}
+                      </span>
+                    </span>
+                  </span>
+
+                  <span className="inline-flex items-center gap-1 text-[9px] font-mono font-bold uppercase tracking-wider text-copper group-hover:text-obsidian">
+                    Load sample
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
               onClick={clearDraft}
-              className="inline-flex items-center gap-1 px-1 py-1 text-[10px] text-stone-500 hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
+              className="inline-flex items-center gap-1 self-start px-1 py-1 text-[10px] text-stone-500 hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
-              <RotateCcw className="h-3 w-3" /> Clear
+              <RotateCcw className="h-3 w-3" />
+              Clear form
             </button>
+
+            <Button
+              type="button"
+              variant="copper"
+              size="md"
+              isLoading={isAnalyzing}
+              disabled={isAnalyzing || analysisAlreadyCurrent}
+              leftIcon={
+                isAnalyzing ? undefined : <Sparkles className="h-4 w-4" />
+              }
+              onClick={runAnalysis}
+            >
+              {isAnalyzing
+                ? 'Analysing Content…'
+                : analysisAlreadyCurrent
+                  ? 'Analysis is current'
+                  : 'Analyse Content'}
+            </Button>
           </div>
-          <Button
-            type="button"
-            variant="copper"
-            size="md"
-            isLoading={isAnalyzing}
-            disabled={isAnalyzing || analysisAlreadyCurrent}
-            leftIcon={isAnalyzing ? undefined : <Sparkles className="h-4 w-4" />}
-            onClick={runAnalysis}
-          >
-            {isAnalyzing ? 'Analysing Content…' : analysisAlreadyCurrent ? 'Analysis is current' : 'Analyse Content'}
-          </Button>
         </div>
+
         {isAnalyzing && (
           <div className="mt-3 flex items-center gap-2 border-t border-copper/25 pt-3 text-xs text-stone-600" role="status" aria-live="polite">
             <LoaderCircle className="h-4 w-4 animate-spin text-copper" />
