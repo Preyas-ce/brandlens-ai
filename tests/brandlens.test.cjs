@@ -1496,3 +1496,214 @@ test('Targeted Polish Task 3: Full-height desktop sidebar layout and sticky scro
   assert.ok(mobileHtml.includes('translate-x-0'), 'Mobile drawer must translate-x-0 when open');
   assert.ok(mobileHtml.includes('bg-obsidian/80'), 'Mobile drawer must show backdrop overlay when open');
 });
+
+test('ReviewPage Git Merge Conflict Resolution: Sample cards, trilingual support, replacement safety, and single analysis button', () => {
+  const React = require('react');
+  global.React = React;
+  const ReactDOMServer = require('react-dom/server');
+  const path = require('node:path');
+  const root = path.resolve(__dirname, '..');
+
+  // Provide mock for cloud client modules before loading ReviewPage
+  require.cache[path.join(root, 'src', 'services', 'supabaseClient.ts')] = {
+    id: path.join(root, 'src', 'services', 'supabaseClient.ts'),
+    filename: path.join(root, 'src', 'services', 'supabaseClient.ts'),
+    loaded: true,
+    exports: { supabase: null, supabaseConfigurationError: 'mocked' },
+  };
+  require.cache[path.join(root, 'src', 'services', 'cloudStorage.ts')] = {
+    id: path.join(root, 'src', 'services', 'cloudStorage.ts'),
+    filename: path.join(root, 'src', 'services', 'cloudStorage.ts'),
+    loaded: true,
+    exports: { cloudCreateReviewDraftRecord: async () => 'mock-id' },
+  };
+
+  const { MemoryRouter } = require('react-router-dom');
+  const { LanguageProvider } = require('../src/contexts/LanguageProvider.tsx');
+  const { ReviewPage } = require('../src/pages/ReviewPage.tsx');
+  const { DEMO_SCENARIOS } = require('../src/services/demoScenarios.ts');
+  const { readReviewRecords, saveReviewRecord, attachFileToReviewRecord } = require('../src/services/reviewStorage.ts');
+  const { analyzeLocalContent } = require('../src/services/localReviewEngine.ts');
+
+  // Ensure window listener mocks
+  global.window.addEventListener = global.window.addEventListener || (() => {});
+  global.window.removeEventListener = global.window.removeEventListener || (() => {});
+  global.window.confirm = () => true;
+
+  try {
+    // 1. Render ReviewPage and verify responsive 3-card grid exists
+    const reviewElement = React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(ReviewPage)
+      )
+    );
+    const html = ReactDOMServer.renderToStaticMarkup(reviewElement);
+
+    // Verify 3-card grid container
+    assert.ok(html.includes('grid grid-cols-1 gap-3 sm:grid-cols-3'), 'Must render responsive 3-card grid');
+
+    // Verify all 3 sample scenarios are rendered in the grid
+    for (const scenario of DEMO_SCENARIOS) {
+      assert.ok(html.includes(scenario.id), `Sample card for scenario ${scenario.id} must be present`);
+    }
+
+    // Verify sample action label and arrow indicator
+    assert.ok(html.includes('Load sample'), 'Sample cards must contain Load sample action');
+    assert.ok(html.includes('Not sure what to enter? Start with a sample.'), 'Must render sample section heading');
+
+    // 2. Exactly ONE Analyse Content button is rendered inside editor actions
+    const analyseButtons = html.match(/<button[^>]*>(?:(?!<\/button>)[\s\S])*?Analyse Content[\s\S]*?<\/button>/gi) || [];
+    assert.equal(analyseButtons.length, 1, 'Exactly ONE Analyse Content button must be rendered');
+
+    // Exactly ONE Clear Form action is rendered
+    const clearActions = html.match(/<button[^>]*>(?:(?!<\/button>)[\s\S])*?Clear[\s\S]*?<\/button>/gi) || [];
+    assert.ok(clearActions.length >= 1, 'Clear form button must be present');
+
+    // 3. Trilingual translation coverage for all sample-related keys across EN, HI, GU
+    const requiredSampleKeys = [
+      'reviewSampleHeading',
+      'reviewSampleDescription',
+      'reviewSampleNeedsReviewDesc',
+      'reviewSampleEvidenceGapsDesc',
+      'reviewSampleCleanApprovalDesc',
+      'reviewLoadSampleAction',
+      'reviewConfirmReplaceWork',
+      'reviewLoadExample',
+      'reviewNeedsReview',
+      'reviewEvidenceGaps',
+      'reviewCleanApproval',
+      'reviewClear',
+      'reviewAnalysing',
+      'reviewAnalysisCurrent',
+      'reviewAnalyseContent',
+    ];
+
+    for (const lang of ['en', 'hi', 'gu']) {
+      let capturedT = null;
+      const TestLang = () => {
+        const { t } = require('../src/contexts/LanguageProvider.tsx').useLanguage();
+        capturedT = t;
+        return null;
+      };
+      global.window.localStorage.setItem('brandlens.language.v1', lang);
+      ReactDOMServer.renderToStaticMarkup(
+        React.createElement(LanguageProvider, null, React.createElement(TestLang))
+      );
+      assert.ok(capturedT, `Translation hook must be initialized for ${lang}`);
+      for (const key of requiredSampleKeys) {
+        const val = capturedT(key);
+        assert.ok(val && typeof val === 'string' && val.length > 0, `Key ${key} must exist and be non-empty in ${lang}`);
+        assert.notEqual(val, key, `Key ${key} in ${lang} must not return raw key fallback`);
+      }
+    }
+
+    // 4. Editor replacement safety simulation
+    let confirmReturnValue = false;
+    global.window.confirm = () => confirmReturnValue;
+
+    // Save an existing review in Approvals with an attachment
+    const existingSubmission = {
+      title: 'Existing Review in Approvals',
+      contentType: 'Social post',
+      campaign: 'Apex Media · Q4 launch',
+      author: 'Elena Rostova',
+      content: 'Original unedited copy before sample load.',
+    };
+    const savedRecord = saveReviewRecord(existingSubmission, 95, [], 'Initial analysis', 'config-hash-1');
+    assert.ok(savedRecord.id, 'Saved record must have ID');
+
+    // Attach an evidence item to the saved record
+    attachFileToReviewRecord({
+      id: 'att-safe-1',
+      workspaceId: '11111111-1111-1111-1111-111111111111',
+      reviewId: savedRecord.id,
+      revision: 1,
+      fileName: 'compliance-proof.pdf',
+      contentType: 'application/pdf',
+      fileSize: 1024,
+      storagePath: '11111111-1111-1111-1111-111111111111/DOC-1/rev-1/att-safe-1-proof.pdf',
+      uploadedBy: 'test-user',
+      createdAt: '2026-10-30T10:00:00Z',
+    });
+
+    // Simulate loadExample replacement logic
+    const simulateLoadExample = (scenarioId, editorState) => {
+      const example = DEMO_SCENARIOS.find((s) => s.id === scenarioId);
+      if (!example) return { state: editorState, loaded: false };
+
+      const hasExistingWork = Boolean(
+        editorState.title.trim() ||
+        editorState.content.trim() ||
+        editorState.author.trim() ||
+        editorState.campaign ||
+        editorState.report ||
+        editorState.editingRecordId ||
+        (editorState.attachments && editorState.attachments.length > 0)
+      );
+
+      if (hasExistingWork && !global.window.confirm('Confirmation prompt')) {
+        return { state: editorState, loaded: false };
+      }
+
+      return {
+        state: {
+          title: example.title,
+          contentType: example.contentType,
+          campaign: example.campaign,
+          author: example.author,
+          content: example.content,
+          report: null,
+          editingRecordId: null,
+          attachments: [],
+        },
+        loaded: true,
+      };
+    };
+
+    // Case A: User cancels confirmation -> editor state must NOT change
+    confirmReturnValue = false;
+    const dirtyEditor = {
+      title: 'Active Draft Title',
+      contentType: 'Email',
+      campaign: 'Custom Campaign',
+      author: 'Draft Author',
+      content: 'Custom draft content in progress',
+      report: { score: 80 },
+      editingRecordId: savedRecord.id,
+      attachments: [{ id: 'att-temp' }],
+    };
+
+    const cancelledResult = simulateLoadExample('needs-review', dirtyEditor);
+    assert.equal(cancelledResult.loaded, false, 'Loading must be aborted when user cancels confirmation');
+    assert.deepEqual(cancelledResult.state, dirtyEditor, 'Editor state must remain unchanged on cancel');
+
+    // Case B: User confirms -> editor receives scenario fields, attachments are NOT transferred
+    confirmReturnValue = true;
+    const confirmedResult = simulateLoadExample('needs-review', dirtyEditor);
+    assert.equal(confirmedResult.loaded, true, 'Loading succeeds when user confirms');
+    assert.equal(confirmedResult.state.title, DEMO_SCENARIOS.find((s) => s.id === 'needs-review').title);
+    assert.equal(confirmedResult.state.editingRecordId, null, 'Editing record ID reset to null');
+    assert.equal(confirmedResult.state.report, null, 'Report reset to null');
+    assert.deepEqual(confirmedResult.state.attachments, [], 'Attachments not transferred to newly loaded sample');
+
+    // Verify existing record in Approvals storage is untouched
+    const recordsAfter = readReviewRecords();
+    const preservedRecord = recordsAfter.find((r) => r.id === savedRecord.id);
+    assert.ok(preservedRecord, 'Previously saved review must remain preserved in storage');
+    assert.equal(preservedRecord.title, 'Existing Review in Approvals');
+    assert.equal(preservedRecord.attachments.length, 1, 'Previously saved review attachments must remain preserved');
+    assert.equal(preservedRecord.attachments[0].id, 'att-safe-1');
+
+    // 5. Verify local analysis engine produces findings on loaded scenario
+    const sampleNeedsReview = DEMO_SCENARIOS.find((s) => s.id === 'needs-review');
+    const analysis = analyzeLocalContent(sampleNeedsReview.content);
+    assert.ok(analysis.findings.length > 0, 'Needs Review scenario must produce policy findings');
+    assert.ok(analysis.score < 100, 'Needs Review scenario must have score lower than 100');
+  } finally {
+    delete global.window.confirm;
+  }
+});

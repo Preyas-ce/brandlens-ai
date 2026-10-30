@@ -441,6 +441,26 @@ export const ReviewPage: React.FC = () => {
       setValidationError('That demo scenario is no longer available.');
       return;
     }
+
+    const hasExistingWork = Boolean(
+      title.trim() ||
+      content.trim() ||
+      author.trim() ||
+      campaign ||
+      report ||
+      editingRecordId ||
+      currentAttachments.length > 0
+    );
+
+    if (
+      hasExistingWork &&
+      !window.confirm(
+        t('reviewConfirmReplaceWork')
+      )
+    ) {
+      return;
+    }
+
     setTitle(example.title);
     setContentType(example.contentType);
     setCampaign(example.campaign);
@@ -478,7 +498,6 @@ export const ReviewPage: React.FC = () => {
       setSuggestedContent('');
     }
   };
-
   const clearDraft = () => {
     setTitle('');
     setContentType(CONTENT_TYPES[0]);
@@ -584,11 +603,10 @@ export const ReviewPage: React.FC = () => {
                 key={example.id}
                 type="button"
                 onClick={() => loadExample(example.id)}
-                className={`flex flex-col justify-between rounded-sm border p-3 text-left transition-all ${
-                  isSelected
+                className={`flex flex-col justify-between rounded-sm border p-3 text-left transition-all ${isSelected
                     ? 'border-copper bg-ivory-50 shadow-xs ring-1 ring-copper/40'
                     : 'border-stone-300 bg-ivory-50/60 hover:border-copper/70 hover:bg-ivory-50'
-                } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60`}
+                  } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60`}
               >
                 <div>
                   <div className="flex items-center justify-between gap-1">
@@ -825,42 +843,101 @@ export const ReviewPage: React.FC = () => {
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {storageError}
           </p>
         )}
+        <div className="mt-5 border-t border-stone-200 pt-4">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-obsidian">
+              {t('reviewSampleHeading')}
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-stone-600">
+              {t('reviewSampleDescription')}
+            </p>
+          </div>
 
-        <div className="mt-4 flex flex-col gap-3 border-t border-stone-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-[9px] font-mono font-semibold uppercase tracking-wider text-stone-500">{t('reviewLoadExample')}</span>
-            {DEMO_SCENARIOS.map((example) => (
-              <button
-                key={example.id}
-                type="button"
-                onClick={() => loadExample(example.id)}
-                className="border-b border-stone-300 px-1 py-1 text-[10px] text-stone-600 hover:border-copper hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
-              >
-                {example.id === 'needs-review' ? t('reviewNeedsReview')
-                  : example.id === 'evidence-review' ? t('reviewEvidenceGaps')
-                    : t('reviewCleanApproval')}
-              </button>
-            ))}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {DEMO_SCENARIOS.map((example) => {
+              const sampleTitle =
+                example.id === 'needs-review'
+                  ? t('reviewNeedsReview')
+                  : example.id === 'evidence-review'
+                    ? t('reviewEvidenceGaps')
+                    : t('reviewCleanApproval');
+
+              const sampleDescription =
+                example.id === 'needs-review'
+                  ? t('reviewSampleNeedsReviewDesc')
+                  : example.id === 'evidence-review'
+                    ? t('reviewSampleEvidenceGapsDesc')
+                    : t('reviewSampleCleanApprovalDesc');
+
+              const SampleIcon =
+                example.id === 'needs-review'
+                  ? AlertTriangle
+                  : example.id === 'evidence-review'
+                    ? FileSearch
+                    : CheckCircle2;
+
+              return (
+                <button
+                  key={example.id}
+                  data-sample-id={example.id}
+                  type="button"
+                  onClick={() => loadExample(example.id)}
+                  aria-label={`${t('reviewLoadExample')}: ${sampleTitle}`}
+                  className="group flex min-h-36 flex-col justify-between gap-4 rounded-sm border border-stone-300 bg-ivory-50 p-3 text-left transition-colors hover:border-copper hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
+                >
+                  <span className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-stone-300 bg-white text-copper-800">
+                      <SampleIcon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-obsidian">
+                        {sampleTitle}
+                      </span>
+                      <span className="mt-1 block text-[10px] leading-relaxed text-stone-600">
+                        {sampleDescription}
+                      </span>
+                    </span>
+                  </span>
+
+                  <span className="inline-flex items-center gap-1 text-[9px] font-mono font-bold uppercase tracking-wider text-copper group-hover:text-obsidian">
+                    {t('reviewLoadSampleAction')}
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
               onClick={clearDraft}
-              className="inline-flex items-center gap-1 px-1 py-1 text-[10px] text-stone-500 hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
+              className="inline-flex items-center gap-1 self-start px-1 py-1 text-[10px] text-stone-500 hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
               <RotateCcw className="h-3 w-3" /> {t('reviewClear')}
             </button>
+
+            <Button
+              type="button"
+              variant="copper"
+              size="md"
+              isLoading={isAnalyzing}
+              disabled={isAnalyzing || analysisAlreadyCurrent}
+              leftIcon={
+                isAnalyzing ? undefined : <Sparkles className="h-4 w-4" />
+              }
+              onClick={runAnalysis}
+            >
+              {isAnalyzing
+                ? t('reviewAnalysing')
+                : analysisAlreadyCurrent
+                  ? t('reviewAnalysisCurrent')
+                  : t('reviewAnalyseContent')}
+            </Button>
           </div>
-          <Button
-            type="button"
-            variant="copper"
-            size="md"
-            isLoading={isAnalyzing}
-            disabled={isAnalyzing || analysisAlreadyCurrent}
-            leftIcon={isAnalyzing ? undefined : <Sparkles className="h-4 w-4" />}
-            onClick={runAnalysis}
-          >
-            {isAnalyzing ? t('reviewAnalysing') : analysisAlreadyCurrent ? t('reviewAnalysisCurrent') : t('reviewAnalyseContent')}
-          </Button>
         </div>
+
         {isAnalyzing && (
           <div className="mt-3 flex items-center gap-2 border-t border-copper/25 pt-3 text-xs text-stone-600" role="status" aria-live="polite">
             <LoaderCircle className="h-4 w-4 animate-spin text-copper" />
