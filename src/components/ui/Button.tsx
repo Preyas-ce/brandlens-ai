@@ -22,7 +22,7 @@ export const Button: React.FC<ButtonProps> = ({
   disabled,
   ...props
 }) => {
-  const baseStyles = 'inline-flex items-center justify-center font-sans font-medium transition duration-150 hover:-translate-y-px hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60 focus-visible:ring-offset-1 focus-visible:ring-offset-ivory active:translate-y-0 active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none select-none';
+  const baseStyles = 'inline-flex items-center justify-center font-sans font-medium transition duration-150 hover:-translate-y-px hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60 focus-visible:ring-offset-1 focus-visible:ring-offset-ivory active:translate-y-0 active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none select-none flex-nowrap';
 
   const sizeStyles: Record<ButtonSize, string> = {
     sm: 'text-xs px-3 py-1.5 rounded-[3px] gap-1.5',

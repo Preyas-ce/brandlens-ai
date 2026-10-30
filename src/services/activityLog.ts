@@ -1,10 +1,11 @@
 import { ActivityEvent } from '@/services/activityFeed';
+import { getScopedStorageKey } from '@/services/storageScope';
 
 export const ACTIVITY_DISMISSED_STORAGE_KEY = 'brandlens.activityDismissed.v1';
 export const ACTIVITY_DISMISSED_UPDATED_EVENT = 'brandlens:activity-dismissed-updated';
 
 export const readDismissedActivityIds = (): string[] => {
-  const raw = window.localStorage.getItem(ACTIVITY_DISMISSED_STORAGE_KEY);
+  const raw = window.localStorage.getItem(getScopedStorageKey(ACTIVITY_DISMISSED_STORAGE_KEY));
   if (!raw) return [];
   let parsed: unknown;
   try {
@@ -21,12 +22,12 @@ export const readDismissedActivityIds = (): string[] => {
 export const dismissActivityEvents = (events: ActivityEvent[]): string[] => {
   const previous = readDismissedActivityIds();
   const next = [...new Set([...previous, ...events.map((event) => event.id)])];
-  window.localStorage.setItem(ACTIVITY_DISMISSED_STORAGE_KEY, JSON.stringify(next));
+  window.localStorage.setItem(getScopedStorageKey(ACTIVITY_DISMISSED_STORAGE_KEY), JSON.stringify(next));
   window.dispatchEvent(new Event(ACTIVITY_DISMISSED_UPDATED_EVENT));
   return previous;
 };
 
 export const restoreDismissedActivityEvents = (ids: string[]): void => {
-  window.localStorage.setItem(ACTIVITY_DISMISSED_STORAGE_KEY, JSON.stringify(ids));
+  window.localStorage.setItem(getScopedStorageKey(ACTIVITY_DISMISSED_STORAGE_KEY), JSON.stringify(ids));
   window.dispatchEvent(new Event(ACTIVITY_DISMISSED_UPDATED_EVENT));
 };

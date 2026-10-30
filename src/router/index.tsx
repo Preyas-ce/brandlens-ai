@@ -8,8 +8,17 @@ import { ApprovalsPage } from '@/pages/ApprovalsPage';
 import { HistoryPage } from '@/pages/HistoryPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
+import { AuthPage } from '@/pages/AuthPage';
 
 export const router = createBrowserRouter([
+  {
+    path: '/auth',
+    element: <AuthPage />,
+  },
+  {
+    path: '/auth/callback',
+    element: <AuthPage />,
+  },
   {
     path: '/',
     element: <Shell />,

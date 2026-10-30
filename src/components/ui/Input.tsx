@@ -2,6 +2,7 @@ import { forwardRef, InputHTMLAttributes, TextareaHTMLAttributes, ReactNode } fr
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
+  labelClassName?: string;
   error?: string;
   helperText?: string;
   leftIcon?: ReactNode;
@@ -9,7 +10,7 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, helperText, leftIcon, rightIcon, className = '', id, ...props }, ref) => {
+  ({ label, labelClassName = '', error, helperText, leftIcon, rightIcon, className = '', id, ...props }, ref) => {
     const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
 
     return (
@@ -17,7 +18,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-[10px] font-mono uppercase tracking-[0.14em] font-semibold text-stone-700"
+            className={`block text-[10px] font-mono uppercase tracking-[0.14em] font-semibold text-stone-700 ${labelClassName}`}
           >
             {label}
           </label>

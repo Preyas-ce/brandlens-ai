@@ -1,15 +1,40 @@
 # BrandLens AI
 
-BrandLens AI is a local-first brand-governance prototype for reviewing marketing and editorial content before publication. Its editorial interface brings deterministic rule matching, evidence catalogue references, and a mandatory human decision into one workflow.
+BrandLens AI is a brand-governance prototype for reviewing marketing and editorial content before publication. It uses authenticated, workspace-scoped Supabase persistence and retains deterministic local rule matching, evidence catalogue references, and a mandatory human decision.
 
-> **Prototype disclosure:** Content analysis is a local, deterministic rules engine. It is not a hosted AI model, legal or factual guarantee, or external fact-checking service. Final publication approval is a separate human decision. Data is stored in browser `localStorage`, which is not a secure production database and can be edited or cleared by the user.
+> **Prototype disclosure:** Content analysis is still a local, deterministic rules engine. It is not a hosted AI model, legal or factual guarantee, or external fact-checking service. Supabase Authentication and PostgreSQL provide persistence and workspace access controls when configured and migrated. Final publication approval is a separate human decision.
 
 ## Requirements
 
 - Node.js and npm
 - A modern browser with JavaScript enabled
+- A Supabase project with email/password authentication enabled
 
-No API keys, paid services, or external AI providers are required.
+The Supabase URL and publishable (or legacy anon) key are required. Never use a service-role key in browser configuration.
+
+## Supabase setup
+
+1. Create a Supabase project. In **Authentication → Providers**, enable Email authentication. Configure the project Site URL and allowed redirect URLs for local development and deployed preview/production origins.
+2. Install the Supabase CLI and authenticate, then link this repository to the project and apply the versioned schema:
+
+   ```powershell
+   npx supabase login
+   npx supabase link --project-ref YOUR_PROJECT_REF
+   npx supabase db push
+   ```
+
+   The migration creates workspace membership, review/revision/decision, guideline/evidence and audit tables, plus workspace-scoped RLS and guarded database operations.
+3. Copy `.env.example` to `.env.local` and set the Supabase project URL and publishable key:
+
+   ```text
+   VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+   VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
+   ```
+
+   A project's public `anon` key can be used for `VITE_SUPABASE_PUBLISHABLE_KEY` if publishable keys are not enabled. These are public browser keys; RLS must remain enabled. Do not put service-role keys in any `VITE_*` variable or commit `.env*` files.
+4. Restart Vite after changing environment values. New users sign up and verify email if confirmation is enabled. The first authenticated account creates a workspace as its admin. Admins can assign existing accounts the writer, reviewer or workspace-admin role in **Settings → Workspace members**.
+5. On first access, choose whether to import browser-local data or continue without it. Import uses a server-side workspace/source marker and skips conflicting IDs; localStorage source keys are preserved. A failed import can be retried, and already-imported sources are reported by the database marker.
+6. For Vercel, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` separately for Preview and Production, and add each deployed URL to Supabase Auth's redirect allowlist. Rebuild/redeploy after changing Vite environment variables.
 
 ## Run locally
 
@@ -26,13 +51,25 @@ Build and type-check for production:
 npm.cmd run build
 ```
 
+Run the automated unit suite:
+
+```powershell
+npm.cmd test
+```
+
+Run Supabase database/RLS tests after linking and applying migrations:
+
+```powershell
+npx supabase test db
+```
+
+The database test requires the Supabase CLI, a configured local Supabase stack, and pgTAP; it is not run by `npm test`.
+
 Preview a production build:
 
 ```powershell
 npm.cmd run preview
 ```
-
-The current `package.json` does not define automated test or lint scripts.
 
 ## Application routes
 
@@ -46,18 +83,19 @@ The current `package.json` does not define automated test or lint scripts.
 | `/activity` | Recent events derived from saved review status history |
 | `/history` | Detailed review and workspace audit history |
 | `/settings` | Workspace preferences, local storage disclosure, and demo scenario controls |
+| `/auth` | Sign in or create an account |
 
-The root route redirects to `/dashboard`.
+Workspace routes require an authenticated Supabase session. The root route renders the existing dashboard after authentication.
 
 ## Review workflow
 
 1. In **Review**, enter a title and content, then run analysis. Whitespace-only content is not accepted.
 2. The local engine evaluates the submission against active workspace guidelines and the evidence catalogue. Findings include matched text, severity, rule reference, explanation, and a suggested correction where applicable.
 3. The calculated report is saved as a review record and enters the human verification queue. Analysis never grants approval.
-4. In **Approvals**, a reviewer inspects the exact content revision, report, rule and evidence snapshots, and then chooses **Approve**, **Request Changes**, or **Reject**. Requesting changes and rejecting require a comment. Approval is recorded against the reviewed revision, with the configured demo reviewer name and decision timestamp.
+4. In **Approvals**, an authenticated reviewer inspects the exact content revision, report, rule and evidence snapshots, and then chooses **Approve**, **Request Changes**, or **Reject**. Requesting changes and rejecting require a comment. The decision is committed against the reviewed revision and content hash, with the authenticated reviewer ID and timestamp.
 5. A writer can use reviewer feedback to revise a submission and run a fresh analysis. A content revision does not inherit the earlier approval; the earlier decision remains attached to its revision history.
 
-The named reviewer is a workspace demo identity, not verified authentication. The prototype does not provide production authorization or tamper-proof audit records.
+Human decisions require reviewer or workspace-admin membership. The reviewer identity is tied to the authenticated Supabase user; display text alone does not grant authorization.
 
 ## Analysis, guidelines, and evidence
 
@@ -66,7 +104,7 @@ The named reviewer is a workspace demo identity, not verified authentication. Th
 - Completed reports retain their findings and guideline/evidence snapshots as historical results.
 - The score starts at 100 and subtracts 20 points per critical finding, 10 per moderate finding, and 4 per minor finding, with a floor of 0. It is a heuristic indicator, not an approval threshold or proof of compliance.
 - Evidence is linked only to applicable catalogue entries. Unverified or expired entries are described as **Unverified**; missing evidence is not invented. A catalogue match is not external fact-checking.
-- The default workspace provides sample guidelines and a sample evidence catalogue for demonstration. Workspace content is editable and persists locally.
+- New workspaces receive the existing sample guidelines and evidence catalogue for demonstration. Workspace content is editable and persists remotely in the authenticated workspace.
 
 ## Repeatable demo
 
@@ -87,12 +125,14 @@ The analysis workbench and Quick Scan also include sample text templates; choosi
 
 ## Persistence and data scope
 
-The prototype stores its shared state in browser-local keys:
+The authoritative shared state is stored in the authenticated Supabase workspace. PostgreSQL tables persist reviews, content revisions/findings, status events, decisions, guidelines, evidence metadata, workspace settings and audit history. RLS scopes reads to workspace members; write operations enforce workspace roles and the human-decision gate.
+
+Browser localStorage is used for UI preferences, the existing local data migration source, and a workspace-specific client cache:
 
 - `brandlens.reviewRecords.v1` — submissions, current and prior revisions, findings, status transitions, and reviewer decisions.
 - `brandlens.workspaceData.v1` — guidelines, evidence catalogue, workspace settings, and workspace audit events.
 
-Data is scoped to the current browser profile and origin. Clearing site data removes it. Do not use this prototype for confidential content or rely on local records as a secure or immutable system of record.
+The local source keys are not automatically deleted after import. Workspace caches are separated by workspace ID. Clearing browser data removes the local cache but not the Supabase records. The database migration does not enable file attachments or model-backed review.
 
 ## Technology
 
@@ -101,12 +141,13 @@ Data is scoped to the current browser profile and origin. Clearing site data rem
 - React Router
 - Tailwind CSS with the BrandLens palette
 - Lucide React icons
+- Supabase Auth and PostgreSQL (`@supabase/supabase-js`)
 
-There is no backend service or third-party AI dependency.
+There is no hosted AI model or external fact-checking integration.
 
 ## Known prototype limitations
 
 - Analysis uses configured phrase and pattern matching; it does not understand all context or independently verify claims.
-- Browser storage has no server-side backup, production access control, or tamper resistance.
-- The demo reviewer identity is configurable display text, not authentication.
-- Automated test and lint commands are not currently configured in `package.json`.
+- Supabase credentials, migration application, Auth email/redirect settings and Vercel environment configuration must be supplied by the deployer. This repository's automated tests do not prove live database or RLS behavior; run the documented Supabase database tests and two-user isolation checks against the configured project.
+- Local migration source data remains editable in the browser until the user clears it. Imported cloud data is governed by database policies, but this prototype does not claim immutable, legally compliant audit retention.
+- Attachment uploads and multilingual model review are not implemented in this phase.

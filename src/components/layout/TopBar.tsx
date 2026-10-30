@@ -15,6 +15,7 @@ import {
   Clock,
   Settings as SettingsIcon,
   ChevronRight,
+  LogOut,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -29,7 +30,10 @@ import {
 } from '@/services/workspaceStorage';
 import { WorkspaceSettings } from '@/types/workspace';
 import { analyzeLocalContent, LocalReviewAnalysis } from '@/services/localReviewEngine';
-import { QUICK_SCAN_OPEN_EVENT } from '@/services/uiPreferences';
+import { QUICK_SCAN_OPEN_EVENT, QUICK_SCAN_CLOSE_EVENT } from '@/services/uiPreferences';
+import { useAuth } from '@/contexts/AuthProvider';
+import { getScopedStorageKey } from '@/services/storageScope';
+import { LanguageSwitcher } from './LanguageSwitcher';
 
 interface TopBarProps {
   onOpenMobileSidebar: () => void;
@@ -93,6 +97,7 @@ const QUICK_SCAN_SAMPLES = [
 ] as const;
 
 export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
+  const auth = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -114,6 +119,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
   const [quickScanText, setQuickScanText] = useState('');
   const [quickScanResult, setQuickScanResult] = useState<LocalReviewAnalysis | null>(null);
   const [quickScanError, setQuickScanError] = useState('');
+  const [signOutError, setSignOutError] = useState('');
 
   // Refs for click outside
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -123,9 +129,10 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
   const activeWorkspace = {
     name: workspaceSettings.workspaceName,
     division: workspaceSettings.demoBrandName,
-    region: 'Local browser workspace',
+    region: 'Authenticated Supabase workspace',
   };
-  const reviewerInitials = workspaceSettings.reviewerDisplayName
+  const signedInName = auth.session?.user.email ?? workspaceSettings.reviewerDisplayName;
+  const reviewerInitials = signedInName
     .split(/\s+/)
     .filter((part) => part && !part.startsWith('('))
     .slice(0, 2)
@@ -173,8 +180,17 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
       setQuickScanError('');
       setIsQuickScanModalOpen(true);
     };
+    const closeQuickScan = () => {
+      setIsQuickScanModalOpen(false);
+      setQuickScanResult(null);
+      setQuickScanError('');
+    };
     window.addEventListener(QUICK_SCAN_OPEN_EVENT, openQuickScan);
-    return () => window.removeEventListener(QUICK_SCAN_OPEN_EVENT, openQuickScan);
+    window.addEventListener(QUICK_SCAN_CLOSE_EVENT, closeQuickScan);
+    return () => {
+      window.removeEventListener(QUICK_SCAN_OPEN_EVENT, openQuickScan);
+      window.removeEventListener(QUICK_SCAN_CLOSE_EVENT, closeQuickScan);
+    };
   }, []);
 
   useEffect(() => {
@@ -189,7 +205,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
     refreshSettings();
     window.addEventListener(WORKSPACE_DATA_UPDATED_EVENT, refreshSettings);
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === WORKSPACE_DATA_STORAGE_KEY) refreshSettings();
+      if (event.key === getScopedStorageKey(WORKSPACE_DATA_STORAGE_KEY)) refreshSettings();
     };
     window.addEventListener('storage', handleStorage);
     return () => {
@@ -494,7 +510,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
           </button>
 
           {/* Quick Scan Action */}
-          <div className="hidden sm:block">
+          <div className="hidden sm:block" data-tour="quick-scan-button">
             <Button
               variant="copper"
               size="sm"
@@ -519,7 +535,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
                 setIsNotificationsOpen(false);
               }}
               aria-expanded={isAvatarOpen}
-              aria-label="Demo reviewer profile"
+              aria-label="Authenticated account profile"
               className="flex items-center gap-2 p-1 rounded-[3px] hover:bg-stone-200/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
               <div className="relative w-8 h-8 rounded-[2px] bg-obsidian text-ivory flex items-center justify-center font-mono font-bold text-xs border border-obsidian-700 shadow-xs">
@@ -534,21 +550,21 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
                 <div className="p-4 bg-ivory-100/90 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="font-serif text-base font-medium text-obsidian">
-                      {workspaceSettings.reviewerDisplayName}
+                      {signedInName}
                     </span>
-                    <Badge variant="stone" size="sm" dot>Demo identity</Badge>
+                    <Badge variant="forest" size="sm" dot>{auth.role?.replace('_', ' ') ?? 'Member'}</Badge>
                   </div>
                   <p className="text-xs text-stone-600 font-sans">
-                    Local prototype reviewer · not authenticated
+                    Signed in to {auth.workspace?.name ?? 'your workspace'}
                   </p>
                   <div className="pt-2">
                     <div className="p-2 rounded-[2px] bg-white border border-stone-200 text-[11px] space-y-0.5">
                       <div className="flex items-center gap-1 text-copper font-semibold">
                         <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>                        Demo reviewer identity</span>
+                        <span>Authenticated account</span>
                       </div>
                       <p className="text-stone-500 text-[10px]">
-                        Future decisions are recorded under this configured display name.
+                        Human decisions are linked to your authenticated user ID.
                       </p>
                     </div>
                   </div>
@@ -597,14 +613,31 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
                     <UserCheck className="w-3.5 h-3.5 text-copper" />
                     <span>Open Verification Queue</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSignOutError('');
+                      void auth.signOut().catch((error: unknown) => {
+                        setSignOutError(error instanceof Error ? error.message : 'Sign out failed.');
+                      });
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs text-stone-700 hover:text-obsidian hover:bg-ivory-100 flex items-center gap-2"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-stone-500" />
+                    <span>Sign out</span>
+                  </button>
                 </div>
 
+                {signOutError && <p role="alert" className="px-3 py-2 text-[10px] text-copper-900">{signOutError}</p>}
                 <div className="p-3 bg-ivory-100/50 flex items-center justify-between text-[11px] text-stone-500 font-mono">
-                  <span>Session: Local Workspace</span>
-                  <span className="text-stone-600 font-semibold">Local only</span>
+                  <span>Session: Authenticated</span>
+                  <span className="text-forest-700 font-semibold">Cloud workspace</span>
                 </div>
               </div>
             )}
+          </div>
+          <div className="flex shrink-0 items-center">
+            <LanguageSwitcher />
           </div>
         </div>
       </header>
@@ -659,7 +692,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobileSidebar }) => {
         subtitle="Inspect a snippet against active local guidelines and the current evidence catalogue."
         maxWidth="lg"
       >
-        <form onSubmit={handleQuickScan} className="space-y-4">
+        <form onSubmit={handleQuickScan} className="space-y-4" data-tour="quick-scan-modal">
           <p role="note" className="border-l-4 border-copper bg-copper-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-copper-900">
             Preview only: Running a Quick Heuristic Scan checks snippet text in memory and does not create a saved review record, audit event, or human approval request.
           </p>

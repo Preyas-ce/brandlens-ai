@@ -1,5 +1,6 @@
 import { readReviewRecords } from '@/services/reviewStorage';
 import { ReviewFinding } from '@/types/review';
+import { dispatchStorageUpdated, getScopedStorageKey } from '@/services/storageScope';
 import {
   AuditEventType,
   EvidenceRecord,
@@ -200,6 +201,8 @@ const defaultData = (): WorkspaceData => ({
   auditEvents: [],
 });
 
+export const createDefaultWorkspaceData = (): WorkspaceData => defaultData();
+
 const isPlainObject = (value: unknown): value is Record<string, unknown> => (
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 );
@@ -249,7 +252,7 @@ const isWorkspaceAuditEvent = (value: unknown): value is WorkspaceAuditEvent => 
 };
 
 const readData = (): WorkspaceData => {
-  const raw = window.localStorage.getItem(WORKSPACE_DATA_STORAGE_KEY);
+  const raw = window.localStorage.getItem(getScopedStorageKey(WORKSPACE_DATA_STORAGE_KEY));
   if (raw === null) {
     const initial = defaultData();
     writeData(initial);
@@ -327,8 +330,8 @@ const readData = (): WorkspaceData => {
 };
 
 const writeData = (data: WorkspaceData): void => {
-  window.localStorage.setItem(WORKSPACE_DATA_STORAGE_KEY, JSON.stringify(data));
-  window.dispatchEvent(new Event(WORKSPACE_DATA_UPDATED_EVENT));
+  window.localStorage.setItem(getScopedStorageKey(WORKSPACE_DATA_STORAGE_KEY), JSON.stringify(data));
+  dispatchStorageUpdated(WORKSPACE_DATA_UPDATED_EVENT);
 };
 
 export const readGuidelines = (): GuidelineRecord[] => readData().guidelines;
@@ -515,10 +518,30 @@ export const getEvidenceFreshness = (
   if (reviewDueDate && reviewDueDate <= today) return 'due';
   return 'verified';
 };
+const stableStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? 'null';
+  }
 
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+
+  const object = value as Record<string, unknown>;
+
+  const entries = Object.keys(object)
+    .filter((key) => object[key] !== undefined)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${stableStringify(object[key])}`,
+    );
+
+  return `{${entries.join(',')}}`;
+};
 export const getWorkspaceAnalysisConfigHash = (): string => {
   const data = readData();
-  const snapshot = JSON.stringify({
+  const snapshot = stableStringify({
     guidelines: data.guidelines
       .filter((guideline) => guideline.isActive)
       .slice()

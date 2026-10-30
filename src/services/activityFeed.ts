@@ -1,6 +1,7 @@
 import { ReviewRecord } from '@/types/review';
 
 export type ActivityKind = 'submission' | 'issue' | 'comment' | 'revision' | 'approval';
+export type ActivityStatus = 'submitted' | 'draft' | 'analysis_complete' | 'changes_requested' | 'approved' | 'rejected';
 
 export interface ActivityEvent {
   id: string;
@@ -9,6 +10,13 @@ export interface ActivityEvent {
   detail: string;
   timestamp: string;
   reviewId: string;
+  status: ActivityStatus;
+  eventTitle: string;
+  actor: string;
+  note?: string;
+  revision?: number;
+  findingCount?: number;
+  score?: number;
 }
 
 export const getActivityFeed = (records: ReviewRecord[]): ActivityEvent[] => records.flatMap((record) => (
@@ -65,6 +73,13 @@ export const getActivityFeed = (records: ReviewRecord[]): ActivityEvent[] => rec
       detail,
       timestamp: event.at,
       reviewId: record.id,
+      status: event.status as ActivityStatus,
+      eventTitle,
+      actor: event.actor,
+      note: event.note,
+      revision: event.revision ?? record.revision,
+      findingCount: eventFindings.length,
+      score: eventScore,
     }];
   })
 )).sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime());

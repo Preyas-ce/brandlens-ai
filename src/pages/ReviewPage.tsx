@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Panel } from '@/components/ui/Panel';
+import { EvidenceAttachmentSection } from '@/components/brand/EvidenceAttachmentSection';
 import {
   LocalEvidence,
   LocalReviewAnalysis,
@@ -28,9 +29,11 @@ import {
 } from '@/services/localReviewEngine';
 import { DEMO_SCENARIOS } from '@/services/demoScenarios';
 import { getEvidenceCitationRewrite, getVerifiedEvidenceCitationId } from '@/services/evidenceCitation';
-import { readReviewRecords, resubmitReviewRecord, saveReviewDraft, saveReviewRecord, updateReviewRecord } from '@/services/reviewStorage';
-import { WORKSPACE_DATA_UPDATED_EVENT } from '@/services/workspaceStorage';
+import { readReviewRecords, resubmitReviewRecord, saveReviewDraft, saveReviewRecord, updateReviewRecord, REVIEW_RECORDS_UPDATED_EVENT } from '@/services/reviewStorage';
+import { cloudCreateReviewDraftRecord } from '@/services/cloudStorage';
+import { WORKSPACE_DATA_UPDATED_EVENT, getWorkspaceAnalysisConfigHash } from '@/services/workspaceStorage';
 import { ReviewFinding, ReviewSeverity } from '@/types/review';
+import { useLanguage } from '@/contexts/LanguageProvider';
 
 interface ReviewReport extends LocalReviewAnalysis {
   submittedContent: string;
@@ -50,22 +53,10 @@ const SEVERITY_STYLES: Record<ReviewSeverity, string> = {
   minor: 'border-stone-300 bg-stone-100 text-stone-700',
 };
 
-const SEVERITY_LABELS: Record<ReviewSeverity, string> = {
-  critical: 'Critical',
-  moderate: 'Moderate',
-  minor: 'Minor',
-};
-
 const SEVERITY_PEN_HIGHLIGHT: Record<ReviewSeverity, string> = {
   critical: 'bg-copper-200/80 decoration-copper-700',
   moderate: 'bg-copper-100 decoration-copper-600',
   minor: 'bg-stone-200 decoration-stone-600',
-};
-
-const EVIDENCE_STATUS_LABELS: Record<ReviewFinding['evidenceStatus'], string> = {
-  matched: 'Catalogue match',
-  unverified: 'Unverified',
-  'rule-only': 'Rule reference only',
 };
 
 const EVIDENCE_STATUS_STYLES: Record<ReviewFinding['evidenceStatus'], string> = {
@@ -197,10 +188,12 @@ const getEditorialRewrite = (
 };
 
 export const ReviewPage: React.FC = () => {
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const revisionRecordId = searchParams.get('record');
   const spotlightSample = searchParams.get('spotlight');
+  const scenarioParam = searchParams.get('scenario');
   const reanalyzeRequested = searchParams.get('reanalyze') === '1';
   const [title, setTitle] = useState('');
   const [contentType, setContentType] = useState(CONTENT_TYPES[0]);
@@ -226,6 +219,33 @@ export const ReviewPage: React.FC = () => {
     accent: '#1E3A2F',
   });
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [attachmentsVersion, setAttachmentsVersion] = useState(0);
+
+  const activeRecordId = editingRecordId || report?.recordId || null;
+  // attachmentsVersion ensures reactive updates when files are attached or removed
+  const activeRecord = useMemo(() => {
+    if (!activeRecordId) return null;
+    return readReviewRecords().find((r) => r.id === activeRecordId) ?? null;
+  }, [activeRecordId, attachmentsVersion]);
+  const currentRevision = activeRecord?.revision ?? (editingRecordId ? 1 : 1);
+  const currentAttachments = activeRecord?.attachments ?? [];
+
+  const handleEnsureDraftId = async (): Promise<string> => {
+    if (editingRecordId) return editingRecordId;
+    if (report?.recordId) return report.recordId;
+    const configHash = getWorkspaceAnalysisConfigHash();
+    const submission = {
+      title: title.trim() || 'Untitled Draft',
+      contentType,
+      campaign: campaign.trim(),
+      author: author.trim() || 'Workspace editor',
+      content: content.trim() || 'Draft content',
+    };
+    const draft = await cloudCreateReviewDraftRecord(submission, configHash);
+    setEditingRecordId(draft.id);
+    return draft.id;
+  };
+
 
   useEffect(() => {
     const refreshWorkspace = () => {
@@ -239,7 +259,12 @@ export const ReviewPage: React.FC = () => {
     };
     refreshWorkspace();
     window.addEventListener(WORKSPACE_DATA_UPDATED_EVENT, refreshWorkspace);
-    return () => window.removeEventListener(WORKSPACE_DATA_UPDATED_EVENT, refreshWorkspace);
+    const handleRecordsUpdated = () => setAttachmentsVersion((v) => v + 1);
+    window.addEventListener(REVIEW_RECORDS_UPDATED_EVENT, handleRecordsUpdated);
+    return () => {
+      window.removeEventListener(WORKSPACE_DATA_UPDATED_EVENT, refreshWorkspace);
+      window.removeEventListener(REVIEW_RECORDS_UPDATED_EVENT, handleRecordsUpdated);
+    };
   }, []);
 
   useEffect(() => {
@@ -288,6 +313,11 @@ export const ReviewPage: React.FC = () => {
     setValidationError('');
     setStorageError('');
   }, [spotlightSample]);
+
+  useEffect(() => {
+    if (!scenarioParam) return;
+    loadExample(scenarioParam, reanalyzeRequested);
+  }, [scenarioParam, reanalyzeRequested]);
 
   const runAnalysis = async () => {
     if (isAnalyzing) return;
@@ -405,7 +435,7 @@ export const ReviewPage: React.FC = () => {
     }
   };
 
-  const loadExample = (scenarioId: string) => {
+  const loadExample = (scenarioId: string, autoAnalyze = false) => {
     const example = DEMO_SCENARIOS.find((scenario) => scenario.id === scenarioId);
     if (!example) {
       setValidationError('That demo scenario is no longer available.');
@@ -416,8 +446,6 @@ export const ReviewPage: React.FC = () => {
     setCampaign(example.campaign);
     setAuthor(example.author);
     setContent(example.content);
-    setReport(null);
-    setSuggestedContent('');
     setValidationError('');
     setStorageError('');
     setDraftChanged(false);
@@ -425,6 +453,30 @@ export const ReviewPage: React.FC = () => {
     setSuggestionMessages({});
     setEditingRecordId(null);
     setRevisionFeedback('');
+
+    if (autoAnalyze) {
+      try {
+        const analysis = analyzeLocalContent(example.content, visualInput);
+        const summary = `${analysis.summary} Local demo rules only; no live AI model or external fact-checking is used.`;
+        const submission = {
+          title: example.title,
+          contentType: example.contentType,
+          campaign: example.campaign,
+          author: example.author,
+          content: example.content,
+        };
+        const savedRecord = saveReviewRecord(submission, analysis.score, analysis.findings, summary, analysis.configHash);
+        setEditingRecordId(savedRecord.id);
+        setSuggestedContent(example.content);
+        setReport({ ...analysis, summary, submittedContent: example.content, recordId: savedRecord.id });
+      } catch {
+        setReport(null);
+        setSuggestedContent('');
+      }
+    } else {
+      setReport(null);
+      setSuggestedContent('');
+    }
   };
 
   const clearDraft = () => {
@@ -466,60 +518,137 @@ export const ReviewPage: React.FC = () => {
   const findingByRule = report
     ? new Map(report.findings.map((finding) => [finding.ruleId, finding]))
     : new Map<string, ReviewFinding>();
+  const getContentTypeLabel = (type: string) => {
+    if (type === 'Social post') return t('reviewTypeSocialPost');
+    if (type === 'Advertisement') return t('reviewTypeAdvertisement');
+    if (type === 'Landing page') return t('reviewTypeLandingPage');
+    if (type === 'Email') return t('reviewTypeEmail');
+    return type;
+  };
+
   return (
     <div className="space-y-6 font-sans">
       <header className="border-b border-stone-300 pb-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-3xl">
-            <p className="mb-1 text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">Editorial workbench / Local analysis</p>
-            <h2 className="font-serif text-3xl font-normal tracking-tight text-obsidian sm:text-4xl">Content review</h2>
+            <p className="mb-1 text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">{t('reviewKicker')}</p>
+            <h2 className="font-serif text-3xl font-normal tracking-tight text-obsidian sm:text-4xl">{t('reviewTitle')}</h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-stone-600">
-              Inspect a draft against the workspace rulebook and the small local evidence catalogue. Findings support editorial judgment; they do not replace it.
+              {t('reviewDescription')}
             </p>
           </div>
           <Badge variant="neutral" size="sm" icon={<Sparkles className="h-3 w-3" />}>
-            Local demo rules · No live AI
+            {t('reviewDemoBadge')}
           </Badge>
         </div>
         <div className="mt-4 flex flex-wrap items-start gap-2 border-l-2 border-copper/60 pl-3 text-[11px] leading-relaxed text-stone-600">
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-forest" aria-hidden="true" />
-          <span>Analysis runs in this browser using deterministic rules. It does not call an external AI API. A factual claim without a matching approved source is labeled <strong className="font-semibold text-obsidian">Unverified</strong>, never “False”.</span>
+          <span>{t('reviewAnalysisNotice')}</span>
         </div>
       </header>
 
       {revisionFeedback && (
         <div className="border-l-2 border-copper bg-copper-50/70 px-4 py-3 text-sm text-stone-700" role="status">
-          <p className="text-[9px] font-mono font-bold uppercase tracking-[0.15em] text-copper-800">Reviewer feedback · revise and re-analyse</p>
+          <p className="text-[9px] font-mono font-bold uppercase tracking-[0.15em] text-copper-800">{t('reviewReviewerFeedback')}</p>
           <p className="mt-1">{revisionFeedback}</p>
         </div>
       )}
       {workspaceError && <p role="alert" className="border-l-2 border-copper bg-copper-50 px-3 py-2 text-xs text-copper-900">{workspaceError}</p>}
       {editingRecordId && (
         <div className="border-l-2 border-forest bg-forest-50/60 px-4 py-3 text-xs leading-relaxed text-stone-700">
-          This resubmission creates a new content revision for the same review record. Any prior approval remains in the audit history and does not apply to the revised content.
+          {t('reviewRevisionDisclosure')}
         </div>
       )}
 
+      <section
+        aria-label="Curated evaluation scenarios"
+        className="border border-stone-300/80 bg-ivory-100/70 p-4 sm:p-5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200/80 pb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-copper" aria-hidden="true" />
+            <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">
+              {t('demoWorkbenchBannerKicker')}
+            </span>
+          </div>
+          <span className="text-[10px] font-mono text-stone-500">
+            {t('demoWorkbenchBannerDesc')}
+          </span>
+        </div>
+
+        <div className="mt-3.5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {DEMO_SCENARIOS.map((example) => {
+            const isSelected = title === example.title;
+            return (
+              <button
+                key={example.id}
+                type="button"
+                onClick={() => loadExample(example.id)}
+                className={`flex flex-col justify-between rounded-sm border p-3 text-left transition-all ${
+                  isSelected
+                    ? 'border-copper bg-ivory-50 shadow-xs ring-1 ring-copper/40'
+                    : 'border-stone-300 bg-ivory-50/60 hover:border-copper/70 hover:bg-ivory-50'
+                } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60`}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[9px] font-mono uppercase tracking-wider text-copper">
+                      {example.contentType}
+                    </span>
+                    <span className="text-[9px] font-mono text-stone-400">
+                      {example.id === 'needs-review' ? 'R-101 · R-103' : example.id === 'evidence-review' ? 'EVI-02' : 'Pass'}
+                    </span>
+                  </div>
+                  <h4 className="mt-1 font-serif text-sm font-medium text-obsidian">
+                    {example.id === 'needs-review'
+                      ? t('demoScenarioNeedsReviewTitle')
+                      : example.id === 'evidence-review'
+                        ? t('demoScenarioEvidenceTitle')
+                        : t('demoScenarioCleanTitle')}
+                  </h4>
+                  <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-stone-600">
+                    {example.id === 'needs-review'
+                      ? t('demoScenarioNeedsReviewDesc')
+                      : example.id === 'evidence-review'
+                        ? t('demoScenarioEvidenceDesc')
+                        : t('demoScenarioCleanDesc')}
+                  </p>
+                </div>
+                <div className="mt-2.5 flex items-center justify-between border-t border-stone-200/60 pt-2 text-[10px] font-medium text-copper">
+                  <span>{t('demoLoadInWorkbench')}</span>
+                  <ArrowRight className="h-3 w-3" />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <Panel
-        kicker="SUBMISSION"
-        title="Prepare content for review"
-        subtitle="Your original stays intact. Suggested edits are applied only when you choose them."
+        kicker={t('reviewSubmission')}
+        title={t('reviewPrepareContent')}
+        subtitle={t('reviewOriginalIntact')}
         padding="md"
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Input
-            label="Content title"
+            id="review-title"
+            label={t('reviewContentTitle')}
+            labelClassName="sm:min-h-[2.5rem] flex items-end"
             value={title}
             onChange={(event) => {
               setTitle(event.target.value);
               if (report) setDraftChanged(true);
             }}
-            placeholder="e.g. Spring campaign announcement"
+            placeholder={t('reviewTitlePlaceholder')}
             required
           />
-          <label className="block space-y-1.5">
-            <span className="block text-[10px] font-mono font-semibold uppercase tracking-[0.14em] text-stone-700">Content type</span>
+          <div className="w-full space-y-1.5 font-sans">
+            <label htmlFor="review-content-type" className="block text-[10px] font-mono font-semibold uppercase tracking-[0.14em] text-stone-700 sm:min-h-[2.5rem] flex items-end">
+              <span>{t('reviewContentType')}</span>
+            </label>
             <select
+              id="review-content-type"
               value={contentType}
               onChange={(event) => {
                 setContentType(event.target.value);
@@ -527,12 +656,15 @@ export const ReviewPage: React.FC = () => {
               }}
               className="w-full rounded-[3px] border border-stone-300 bg-ivory-50 px-3 py-2 text-sm text-obsidian transition-colors focus:border-copper focus:outline-none focus:ring-1 focus:ring-copper/40"
             >
-              {CONTENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+              {CONTENT_TYPES.map((type) => <option key={type} value={type}>{getContentTypeLabel(type)}</option>)}
             </select>
-          </label>
-          <label className="block space-y-1.5">
-            <span className="block text-[10px] font-mono font-semibold uppercase tracking-[0.14em] text-stone-700">Campaign / brand <span className="normal-case tracking-normal text-stone-500">(optional)</span></span>
+          </div>
+          <div className="w-full space-y-1.5 font-sans">
+            <label htmlFor="review-campaign" className="block text-[10px] font-mono font-semibold uppercase tracking-[0.14em] text-stone-700 sm:min-h-[2.5rem] flex items-end">
+              <span>{t('reviewCampaignBrand')} <span className="normal-case tracking-normal text-stone-500">{t('reviewOptional')}</span></span>
+            </label>
             <select
+              id="review-campaign"
               value={campaign}
               onChange={(event) => {
                 setCampaign(event.target.value);
@@ -540,24 +672,26 @@ export const ReviewPage: React.FC = () => {
               }}
               className="w-full rounded-[3px] border border-stone-300 bg-ivory-50 px-3 py-2 text-sm text-obsidian transition-colors focus:border-copper focus:outline-none focus:ring-1 focus:ring-copper/40"
             >
-              <option value="">No selection</option>
+              <option value="">{t('reviewNoSelection')}</option>
               {CAMPAIGN_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
-          </label>
+          </div>
           <Input
-            label="Creator / submitter"
+            id="review-author"
+            label={t('reviewCreatorSubmitter')}
+            labelClassName="sm:min-h-[2.5rem] flex items-end"
             value={author}
             onChange={(event) => {
               setAuthor(event.target.value);
               if (report) setDraftChanged(true);
             }}
-            placeholder="Optional"
+            placeholder={t('reviewOptional')}
           />
         </div>
 
         <div className="mt-5">
           <label htmlFor="review-content" className="mb-1.5 block text-[10px] font-mono font-semibold uppercase tracking-[0.14em] text-stone-700">
-            Marketing content
+            {t('reviewMarketingContent')}
           </label>
           <textarea
             id="review-content"
@@ -586,13 +720,13 @@ export const ReviewPage: React.FC = () => {
                 }
               }
             }}
-            placeholder="Write or paste the content you want to review…"
+            placeholder={t('reviewContentPlaceholder')}
             aria-describedby="review-content-help"
             className="w-full resize-y rounded-[3px] border border-stone-300 bg-ivory-50 p-4 font-serif text-base leading-relaxed text-obsidian placeholder:font-sans placeholder:text-sm placeholder:text-stone-400 focus:border-copper focus:outline-none focus:ring-1 focus:ring-copper/40"
           />
           <div id="review-content-help" className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-stone-500">
-            <span>{content.trim() ? content.trim().split(/\s+/).length : 0} words · {content.length} characters</span>
-            <span className="font-mono uppercase tracking-wider">Rules and evidence run locally</span>
+            <span>{content.trim() ? content.trim().split(/\s+/).length : 0} {t('reviewWords')} · {content.length} {t('reviewCharacters')}</span>
+            <span className="font-mono uppercase tracking-wider">{t('reviewRulesEvidenceLocal')}</span>
           </div>
         </div>
 
@@ -605,20 +739,20 @@ export const ReviewPage: React.FC = () => {
             className="flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
           >
             <span>
-              <span id="visual-inspector-title" className="block text-[10px] font-mono font-bold uppercase tracking-[0.14em] text-obsidian">Visual & Accessibility Inspector · R-106 / R-107</span>
-              <span className="mt-1 block text-[10px] text-stone-500">Scan the draft and preview WCAG 2.1 contrast with brand palette checks.</span>
+              <span id="visual-inspector-title" className="block text-[10px] font-mono font-bold uppercase tracking-[0.14em] text-obsidian">{t('reviewVisualInspector')}</span>
+              <span className="mt-1 block text-[10px] text-stone-500">{t('reviewVisualInspectorSubtitle')}</span>
             </span>
-            <span className="text-[9px] font-mono uppercase tracking-wider text-copper">{inspectorOpen ? 'Hide' : 'Inspect'}</span>
+            <span className="text-[9px] font-mono uppercase tracking-wider text-copper">{inspectorOpen ? t('reviewHide') : t('reviewInspect')}</span>
           </button>
           {inspectorOpen && (
             <div id="visual-inspector-panel" className="mt-4 grid gap-5 lg:grid-cols-[1fr_1.2fr]">
               <div className="space-y-2 text-[10px] leading-relaxed text-stone-600">
-                <p className="font-mono font-bold uppercase tracking-wider text-obsidian">CTA & accessibility · R-106</p>
-                <p>Quick Scan flags vague link labels (for example “click here”), extended all-caps text, and image references without alternative text. Use descriptive link labels and concise image descriptions.</p>
-                <p className="border-l-2 border-copper/60 pl-2">These wording checks are deterministic local heuristics, not a full page or DOM accessibility audit.</p>
+                <p className="font-mono font-bold uppercase tracking-wider text-obsidian">{t('reviewCtaAccessibility')}</p>
+                <p>{t('reviewCtaAccessibilityDescription')}</p>
+                <p className="border-l-2 border-copper/60 pl-2">{t('reviewHeuristicDisclaimer')}</p>
               </div>
               <div className="space-y-3">
-                <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-obsidian">Brand palette & WCAG contrast · R-107</p>
+                <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-obsidian">{t('reviewBrandPaletteContrast')}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     { label: 'Warm Ivory', value: { foreground: '#181816', background: '#F7F4EB', accent: '#B4532A' } },
@@ -632,12 +766,12 @@ export const ReviewPage: React.FC = () => {
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {([
-                    ['foreground', 'Foreground'],
-                    ['background', 'Background'],
-                    ['accent', 'Accent'],
+                    ['foreground', t('reviewForeground')],
+                    ['background', t('reviewBackground')],
+                    ['accent', t('reviewAccent')],
                   ] as const).map(([key, label]) => (
                     <label key={key} className="space-y-1">
-                      <span className="block text-[9px] font-mono uppercase tracking-wider text-stone-600">{label} hex</span>
+                      <span className="block text-[9px] font-mono uppercase tracking-wider text-stone-600">{label} {t('reviewHex')}</span>
                       <input
                         value={visualInput[key]}
                         onChange={(event) => setVisualInput((current) => ({ ...current, [key]: event.target.value }))}
@@ -655,10 +789,10 @@ export const ReviewPage: React.FC = () => {
                   return (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-stone-200 pt-2 text-[10px]">
                       <span className="font-mono font-semibold text-obsidian">
-                        {ratio === null ? 'Enter valid hex colors' : `${ratio.toFixed(2)}:1 ${ratio >= 7 ? 'AAA pass' : ratio >= 4.5 ? 'AA pass' : 'Fail'}`}
+                        {ratio === null ? t('reviewEnterValidHex') : `${ratio.toFixed(2)}:1 ${ratio >= 7 ? t('reviewAaaPass') : ratio >= 4.5 ? t('reviewAaPass') : t('reviewFail')}`}
                       </span>
-                      <span className={palettePass ? 'text-forest-700' : 'text-copper-800'}>Palette {palettePass ? 'compliant' : 'off-brand'}</span>
-                      <span className="text-stone-500">WCAG 2.1 normal text · AA 4.5:1 / AAA 7:1</span>
+                      <span className={palettePass ? 'text-forest-700' : 'text-copper-800'}>{t('reviewPalette')} {palettePass ? t('reviewCompliant') : t('reviewOffBrand')}</span>
+                      <span className="text-stone-500">{t('reviewWcagText')}</span>
                     </div>
                   );
                 })()}
@@ -666,6 +800,20 @@ export const ReviewPage: React.FC = () => {
             </div>
           )}
         </section>
+
+
+        <div className="mt-5 border-t border-stone-200 pt-4">
+          <EvidenceAttachmentSection
+            reviewId={activeRecordId || ''}
+            revision={currentRevision}
+            attachments={currentAttachments}
+            mode="workbench"
+            uploaderName={author.trim() || 'Workspace editor'}
+            onEnsureDraftId={handleEnsureDraftId}
+            onAttachmentAdded={() => setAttachmentsVersion((v) => v + 1)}
+            onAttachmentRemoved={() => setAttachmentsVersion((v) => v + 1)}
+          />
+        </div>
 
         {validationError && (
           <p role="alert" className="mt-3 flex items-start gap-2 border-l-2 border-copper bg-copper-50/70 px-3 py-2 text-xs text-copper-900">
@@ -680,7 +828,7 @@ export const ReviewPage: React.FC = () => {
 
         <div className="mt-4 flex flex-col gap-3 border-t border-stone-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-[9px] font-mono font-semibold uppercase tracking-wider text-stone-500">Load example</span>
+            <span className="mr-1 text-[9px] font-mono font-semibold uppercase tracking-wider text-stone-500">{t('reviewLoadExample')}</span>
             {DEMO_SCENARIOS.map((example) => (
               <button
                 key={example.id}
@@ -688,9 +836,9 @@ export const ReviewPage: React.FC = () => {
                 onClick={() => loadExample(example.id)}
                 className="border-b border-stone-300 px-1 py-1 text-[10px] text-stone-600 hover:border-copper hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
               >
-                {example.id === 'needs-review' ? 'Needs review'
-                  : example.id === 'evidence-review' ? 'Evidence gaps'
-                    : 'Clean approval'}
+                {example.id === 'needs-review' ? t('reviewNeedsReview')
+                  : example.id === 'evidence-review' ? t('reviewEvidenceGaps')
+                    : t('reviewCleanApproval')}
               </button>
             ))}
             <button
@@ -698,7 +846,7 @@ export const ReviewPage: React.FC = () => {
               onClick={clearDraft}
               className="inline-flex items-center gap-1 px-1 py-1 text-[10px] text-stone-500 hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
-              <RotateCcw className="h-3 w-3" /> Clear
+              <RotateCcw className="h-3 w-3" /> {t('reviewClear')}
             </button>
           </div>
           <Button
@@ -710,24 +858,24 @@ export const ReviewPage: React.FC = () => {
             leftIcon={isAnalyzing ? undefined : <Sparkles className="h-4 w-4" />}
             onClick={runAnalysis}
           >
-            {isAnalyzing ? 'Analysing Content…' : analysisAlreadyCurrent ? 'Analysis is current' : 'Analyse Content'}
+            {isAnalyzing ? t('reviewAnalysing') : analysisAlreadyCurrent ? t('reviewAnalysisCurrent') : t('reviewAnalyseContent')}
           </Button>
         </div>
         {isAnalyzing && (
           <div className="mt-3 flex items-center gap-2 border-t border-copper/25 pt-3 text-xs text-stone-600" role="status" aria-live="polite">
             <LoaderCircle className="h-4 w-4 animate-spin text-copper" />
-            Checking terminology, claims, evidence, and accessibility against local rules…
+            {t('reviewAnalysisProgress')}
           </div>
         )}
       </Panel>
 
       {report ? (
-        <section aria-labelledby="analysis-report-heading" className="space-y-4">
+        <section data-tour="review-findings" aria-labelledby="analysis-report-heading" className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-3 border-b border-stone-300 pb-3">
             <div>
-              <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">Analysis report</p>
+              <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">{t('reviewAnalysisReport')}</p>
               <h3 id="analysis-report-heading" className="mt-1 font-serif text-2xl text-obsidian">{title.trim()}</h3>
-              <p className="mt-1 text-[11px] text-stone-500">{contentType}{campaign ? ` · ${campaign}` : ''} · {report.recordId ? `Record ${report.recordId}` : 'Not saved'}</p>
+              <p className="mt-1 text-[11px] text-stone-500">{getContentTypeLabel(contentType)}{campaign ? ` · ${campaign}` : ''} · {report.recordId ? `${t('reviewRecord')} ${report.recordId}` : t('reviewNotSaved')}</p>
             </div>
             {report.recordId && (
               <Button
@@ -738,27 +886,27 @@ export const ReviewPage: React.FC = () => {
                 rightIcon={<ArrowRight className="h-3.5 w-3.5" />}
                 onClick={() => navigate('/approvals')}
               >
-                Open Verification Gate
+                {t('reviewOpenVerificationGate')}
               </Button>
             )}
           </div>
 
           {draftChanged && (
             <p className="border-l-2 border-copper bg-copper-50/60 px-3 py-2 text-xs text-copper-900">
-              The editable draft has changed since this analysis. Re-analyse it to refresh the score, findings, and approval record.
+              {t('reviewDraftChanged')}
             </p>
           )}
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             <Panel
-              kicker="01 / ORIGINAL CONTENT"
-              title="Submitted copy"
-              subtitle="Highlights point to text matched by a local rule."
+              kicker={t('reviewOriginalContentKicker')}
+              title={t('reviewSubmittedCopy')}
+              subtitle={t('reviewHighlightsLocalRule')}
               padding="md"
               className="lg:col-span-5"
             >
               <div className="mb-4 flex items-end justify-between border-b border-stone-200 pb-3">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-stone-500">Consistency score</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-stone-500">{t('reviewConsistencyScore')}</span>
                 <span className={`font-serif text-4xl leading-none ${report.score >= 85 ? 'text-forest' : report.score >= 65 ? 'text-copper-700' : 'text-copper-900'}`}>
                   {report.score}<span className="text-sm text-stone-500"> / 100</span>
                 </span>
@@ -772,13 +920,13 @@ export const ReviewPage: React.FC = () => {
               )}
               <HighlightedContent content={report.submittedContent} findings={report.findings} />
               <p className="mt-4 border-t border-stone-200 pt-3 text-[10px] leading-relaxed text-stone-500">
-                Score method: start at 100; subtract 20 per critical, 10 per moderate, and 4 per minor finding; floor at 0.
+                {t('reviewScoringMethod')}
               </p>
             </Panel>
 
             <Panel
-              kicker="02 / FINDINGS"
-              title={`${report.findings.length} finding${report.findings.length === 1 ? '' : 's'}`}
+              kicker={t('reviewFindingsKicker')}
+              title={`${report.findings.length} ${report.findings.length === 1 ? t('reviewFindingSingular') : t('reviewFindingPlural')}`}
               subtitle={report.summary}
               padding="md"
               className="lg:col-span-4"
@@ -786,10 +934,10 @@ export const ReviewPage: React.FC = () => {
               {report.findings.length === 0 ? (
                 <div className="border-l-2 border-forest bg-forest-50/70 p-4">
                   <div className="flex items-center gap-2 text-sm font-semibold text-forest-800">
-                    <CheckCircle2 className="h-4 w-4" /> No configured rules matched
+                    <CheckCircle2 className="h-4 w-4" /> {t('reviewNoConfiguredRules')}
                   </div>
                   <p className="mt-2 text-xs leading-relaxed text-stone-700">
-                    This is not a guarantee of factual accuracy or full policy compliance. The local engine only checks its listed rules.
+                    {t('reviewNoAccuracyGuarantee')}
                   </p>
                 </div>
               ) : (
@@ -809,9 +957,9 @@ export const ReviewPage: React.FC = () => {
             </Panel>
 
             <Panel
-              kicker="03 / EVIDENCE"
-              title="Sources & rulebook"
-              subtitle="A rule reference is not proof of a factual claim."
+              kicker={t('reviewEvidenceKicker')}
+              title={t('reviewSourcesRulebook')}
+              subtitle={t('reviewRuleReferenceNotProof')}
               padding="md"
               className="lg:col-span-3"
             >
@@ -821,25 +969,25 @@ export const ReviewPage: React.FC = () => {
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-[10px] font-semibold leading-snug text-obsidian">{finding.ruleId} · {finding.ruleTitle}</span>
                       <span className={`shrink-0 text-[8px] font-mono uppercase tracking-wider ${EVIDENCE_STATUS_STYLES[finding.evidenceStatus]}`}>
-                        {EVIDENCE_STATUS_LABELS[finding.evidenceStatus]}
+                        {finding.evidenceStatus === 'matched' ? t('reviewEvidenceMatched') : finding.evidenceStatus === 'unverified' ? t('reviewEvidenceUnverified') : t('reviewEvidenceRuleOnly')}
                       </span>
                     </div>
                     <p className="mt-1.5 text-[10px] leading-relaxed text-stone-600">
-                      {finding.evidenceReference ?? 'No matching approved evidence is available in the local catalogue.'}
+                      {finding.evidenceReference ?? t('reviewNoMatchingEvidence')}
                     </p>
                     {finding.evidenceStatus === 'unverified' && (
-                      <p className="mt-1 text-[9px] leading-relaxed text-copper-800">The claim is Unverified. This check does not determine that it is false.</p>
+                      <p className="mt-1 text-[9px] leading-relaxed text-copper-800">{t('reviewUnverifiedNotFalse')}</p>
                     )}
                   </article>
                 )) : (
                   <div className="border-l-2 border-stone-300 pl-3 text-xs leading-relaxed text-stone-600">
-                    No finding required an evidence reference. The configured catalogue contains {evidenceCatalogue.length} local entries.
+                    {t('reviewNoFindingEvidenceStart')} {evidenceCatalogue.length} {t('reviewLocalEntries')}
                   </div>
                 )}
 
                 <div className="border-t border-copper/30 pt-3">
                   <h4 className="mb-2 flex items-center gap-1.5 text-[9px] font-mono font-bold uppercase tracking-[0.15em] text-copper">
-                    <BookOpenCheck className="h-3.5 w-3.5" /> Evidence catalogue
+                    <BookOpenCheck className="h-3.5 w-3.5" /> {t('reviewEvidenceCatalogue')}
                   </h4>
                   {evidenceCatalogue.map((entry) => (
                     <div key={entry.id} className="mb-2 last:mb-0">
@@ -850,7 +998,7 @@ export const ReviewPage: React.FC = () => {
                 </div>
 
                 <div className="border-t border-stone-200 pt-3">
-                  <p className="mb-2 text-[9px] font-mono font-bold uppercase tracking-[0.15em] text-stone-500">Active local rules</p>
+                  <p className="mb-2 text-[9px] font-mono font-bold uppercase tracking-[0.15em] text-stone-500">{t('reviewActiveLocalRules')}</p>
                   {activeRules.map((rule) => {
                     const flagged = findingByRule.has(rule.id);
                     return (
@@ -867,40 +1015,42 @@ export const ReviewPage: React.FC = () => {
             </Panel>
           </div>
 
-          <Panel
-            kicker="SIDE-BY-SIDE REVIEW"
-            title="Original and suggested version"
-            subtitle="Only an explicit suggestion action changes the editable draft. Review edits before submitting them again."
-            padding="md"
-          >
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[10px] text-stone-500">Original is preserved in the review record; the suggested version reflects your edits.</span>
-              <button
-                type="button"
-                onClick={resetSuggestedVersion}
-                disabled={!draftChanged}
-                className="inline-flex items-center gap-1 text-[9px] font-mono uppercase tracking-wider text-stone-600 hover:text-obsidian disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
-              >
-                <RotateCcw className="h-3 w-3" /> Reset suggestions
-              </button>
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="min-w-0 border-t-2 border-stone-300 pt-3">
-                <p className="mb-2 text-[9px] font-mono font-bold uppercase tracking-wider text-stone-500">Original submission</p>
-                <div className="min-h-32 w-full max-w-full whitespace-pre-wrap text-left text-sm leading-relaxed [overflow-wrap:anywhere] [text-indent:0] text-stone-700">{report.submittedContent}</div>
+          <div data-tour="review-suggestion-box">
+            <Panel
+              kicker={t('reviewSideBySide')}
+              title={t('reviewOriginalSuggested')}
+              subtitle={t('reviewOnlyExplicitSuggestion')}
+              padding="md"
+            >
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] text-stone-500">{t('reviewOriginalPreserved')}</span>
+                <button
+                  type="button"
+                  onClick={resetSuggestedVersion}
+                  disabled={!draftChanged}
+                  className="inline-flex items-center gap-1 text-[9px] font-mono uppercase tracking-wider text-stone-600 hover:text-obsidian disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
+                >
+                  <RotateCcw className="h-3 w-3" /> {t('reviewResetSuggestions')}
+                </button>
               </div>
-              <div className="min-w-0 border-t-2 border-forest pt-3">
-                <p className="mb-2 text-[9px] font-mono font-bold uppercase tracking-wider text-forest">Suggested version · editable above</p>
-                <div className={`min-h-32 w-full max-w-full whitespace-pre-wrap text-left text-sm leading-relaxed [overflow-wrap:anywhere] [text-indent:0] text-obsidian ${appliedSuggestions.length ? 'rounded-sm bg-forest-50/70 ring-2 ring-forest/35 animate-pulse' : ''}`}>{suggestedContent}</div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="min-w-0 border-t-2 border-stone-300 pt-3">
+                  <p className="mb-2 text-[9px] font-mono font-bold uppercase tracking-wider text-stone-500">{t('reviewOriginalSubmission')}</p>
+                  <div className="min-h-32 w-full max-w-full whitespace-pre-wrap text-left text-sm leading-relaxed [overflow-wrap:anywhere] [text-indent:0] text-stone-700">{report.submittedContent}</div>
+                </div>
+                <div className="min-w-0 border-t-2 border-forest pt-3">
+                  <p className="mb-2 text-[9px] font-mono font-bold uppercase tracking-wider text-forest">{t('reviewSuggestedEditable')}</p>
+                  <div className={`min-h-32 w-full max-w-full whitespace-pre-wrap text-left text-sm leading-relaxed [overflow-wrap:anywhere] [text-indent:0] text-obsidian ${appliedSuggestions.length ? 'rounded-sm bg-forest-50/70 ring-2 ring-forest/35 animate-pulse' : ''}`}>{suggestedContent}</div>
+                </div>
               </div>
-            </div>
-          </Panel>
+            </Panel>
+          </div>
 
           {report.recordId ? (
             <div className="flex flex-col gap-3 border-t border-stone-300 pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-2 text-xs text-stone-600">
                 <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-forest" />
-                <span>Saved as <strong className="font-mono text-obsidian">{report.recordId}</strong> and added to the human verification queue. The approval page uses the original submission.</span>
+                <span>{t('reviewSavedAs')} <strong className="font-mono text-obsidian">{report.recordId}</strong> {t('reviewApprovalQueueSaved')}</span>
               </div>
               <Button
                 type="button"
@@ -910,21 +1060,21 @@ export const ReviewPage: React.FC = () => {
                 rightIcon={<ArrowRight className="h-4 w-4" />}
                 onClick={() => navigate('/approvals')}
               >
-                Continue to Human Verification
+                {t('reviewContinueHumanVerification')}
               </Button>
             </div>
           ) : (
             <p role="status" className="border-l-2 border-copper bg-copper-50/70 px-3 py-2 text-xs text-copper-900">
-              This analysis was not saved. Resolve the local storage issue above before sending it to the approval queue.
+              {t('reviewAnalysisNotSaved')}
             </p>
           )}
         </section>
       ) : (
-        <Panel kicker="ANALYSIS REPORT" title="Findings appear here" padding="none" className="border-dashed">
+        <Panel kicker={t('reviewAnalysisReport')} title={t('reviewFindingsAppearHere')} padding="none" className="border-dashed">
           <EmptyState
-            kicker="AWAITING SUBMISSION"
-            title="Your content stays yours"
-            description="Complete the submission fields and analyse the copy. The local engine will show matched text, rule references, evidence availability, and optional wording suggestions."
+            kicker={t('reviewAwaitingSubmission')}
+            title={t('reviewYourContentStaysYours')}
+            description={t('reviewCompleteSubmission')}
             icon={<FileSearch className="h-5 w-5 text-copper" />}
             className="my-4 border-0 bg-transparent"
           />
@@ -940,14 +1090,20 @@ interface SeverityCountProps {
 }
 
 const SeverityCount: React.FC<SeverityCountProps> = ({ label, count }) => {
+  const { t } = useLanguage();
+  const severityLabel = label === 'critical' ? t('reviewSeverityCritical') : label === 'moderate' ? t('reviewSeverityModerate') : t('reviewSeverityMinor');
   return (
     <span className={`inline-flex items-center gap-1 border px-1.5 py-1 text-[9px] font-mono uppercase tracking-wider ${SEVERITY_STYLES[label]}`}>
-      {SEVERITY_LABELS[label]} <strong>{count}</strong>
+      {severityLabel} <strong>{count}</strong>
     </span>
   );
 };
 
 const HighlightedContent: React.FC<{ content: string; findings: ReviewFinding[] }> = ({ content, findings }) => {
+  const { t } = useLanguage();
+  const getSeverityLabel = (s: ReviewSeverity) =>
+    s === 'critical' ? t('reviewSeverityCritical') : s === 'moderate' ? t('reviewSeverityModerate') : t('reviewSeverityMinor');
+
   const boundaries = Array.from(new Set([
     0,
     content.length,
@@ -971,7 +1127,7 @@ const HighlightedContent: React.FC<{ content: string; findings: ReviewFinding[] 
           <mark
             key={`${start}-${end}`}
             className={`${SEVERITY_PEN_HIGHLIGHT[strongest]} decoration-2 underline underline-offset-2`}
-            title={matchingFindings.map((finding) => `${SEVERITY_LABELS[finding.severity]}: ${finding.ruleTitle}`).join('; ')}
+            title={matchingFindings.map((finding) => `${getSeverityLabel(finding.severity)}: ${finding.ruleTitle}`).join('; ')}
           >
             {segment}
           </mark>
@@ -989,61 +1145,66 @@ interface FindingCardProps {
   onApply: (mode: 'safe' | 'evidence') => void;
 }
 
-const FindingCard: React.FC<FindingCardProps> = ({ finding, appliedModes, citationId, statusMessage, onApply }) => (
-  <article className="border-b border-stone-200 pb-3 last:border-b-0 last:pb-0">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className={`inline-flex items-center border px-1.5 py-1 text-[9px] font-mono font-semibold uppercase tracking-wider ${SEVERITY_STYLES[finding.severity]}`}>
-        {SEVERITY_LABELS[finding.severity]}
-      </span>
-      <span className="text-[9px] font-mono uppercase tracking-wider text-stone-500">{finding.category} · {finding.ruleId}</span>
-    </div>
-    <h4 className="mt-2 text-xs font-semibold leading-snug text-obsidian">{finding.ruleTitle}</h4>
-    <blockquote className="mt-2 border-l-2 border-copper bg-ivory-100/80 px-2.5 py-2 font-serif text-xs italic leading-relaxed text-stone-800">
-      “{finding.quote}”
-    </blockquote>
-    <p className="mt-2 text-[10px] leading-relaxed text-stone-600">{finding.reason}</p>
-    <p className="mt-2 text-[10px] leading-relaxed text-obsidian">
-      <strong className="font-semibold">Applicable rule:</strong> {finding.ruleId} — {finding.guidelineSnapshot?.description ?? finding.ruleTitle}
-    </p>
-    {finding.evidenceReference && (
-      <p className="mt-1 text-[9px] leading-relaxed text-stone-500">Reference: {finding.evidenceReference}</p>
-    )}
-    <div className="mt-2 min-w-0 border-t border-stone-200 pt-2">
-      <p className="w-full text-left text-[10px] leading-relaxed text-forest-800 [overflow-wrap:anywhere]">
-        {finding.suggestion
-          ? <>Suggestion: <strong>{finding.suggestion}</strong></>
-          : 'Suggestion: remove the highlighted text; add a verified source where needed.'}
-      </p>
-      {statusMessage && <p role="status" className="mt-2 border-l-2 border-copper bg-copper-50/70 px-2 py-1.5 text-[9px] leading-relaxed text-copper-900">{statusMessage}</p>}
-      {!citationId && (
-        <p className="mt-2 text-[9px] leading-relaxed text-copper-800">The evidence placeholder is draft text only, not a catalogue record; it does not change the finding’s evidence status.</p>
-      )}
-      {finding.evidenceStatus === 'matched' && citationId && (
-        <p className="mt-2 text-[9px] leading-relaxed text-forest-800">Verified catalogue record available: {citationId}.</p>
-      )}
-      <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-        {([
-          ['safe', 'Apply Safe Editorial Rewrite'],
-          ['evidence', citationId
-            ? `Insert Verified Catalogue Citation · ${citationId}`
-            : 'Insert "[approved evidence required]" Placeholder'],
-        ] as const).map(([mode, label]) => {
-          const applied = appliedModes.includes(`${finding.id}:${mode}`);
-          return (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => onApply(mode)}
-              disabled={applied}
-              title={applied ? 'This rewrite has been applied' : label}
-              className="inline-flex shrink-0 items-center gap-1 border border-forest-300 bg-forest-50 px-2 py-1 text-[8px] font-mono uppercase tracking-wider text-forest-800 hover:bg-forest-100 disabled:cursor-default disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
-            >
-              {applied ? <Check className="h-3 w-3" /> : null}
-              {applied ? 'Applied' : label}
-            </button>
-          );
-        })}
+const FindingCard: React.FC<FindingCardProps> = ({ finding, appliedModes, citationId, statusMessage, onApply }) => {
+  const { t } = useLanguage();
+  const severityLabel = finding.severity === 'critical' ? t('reviewSeverityCritical') : finding.severity === 'moderate' ? t('reviewSeverityModerate') : t('reviewSeverityMinor');
+
+  return (
+    <article className="border-b border-stone-200 pb-3 last:border-b-0 last:pb-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className={`inline-flex items-center border px-1.5 py-1 text-[9px] font-mono font-semibold uppercase tracking-wider ${SEVERITY_STYLES[finding.severity]}`}>
+          {severityLabel}
+        </span>
+        <span className="text-[9px] font-mono uppercase tracking-wider text-stone-500">{finding.category} · {finding.ruleId}</span>
       </div>
-    </div>
-  </article>
-);
+      <h4 className="mt-2 text-xs font-semibold leading-snug text-obsidian">{finding.ruleTitle}</h4>
+      <blockquote className="mt-2 border-l-2 border-copper bg-ivory-100/80 px-2.5 py-2 font-serif text-xs italic leading-relaxed text-stone-800">
+        “{finding.quote}”
+      </blockquote>
+      <p className="mt-2 text-[10px] leading-relaxed text-stone-600">{finding.reason}</p>
+      <p className="mt-2 text-[10px] leading-relaxed text-obsidian">
+        <strong className="font-semibold">{t('reviewApplicableRule')}</strong> {finding.ruleId} — {finding.guidelineSnapshot?.description ?? finding.ruleTitle}
+      </p>
+      {finding.evidenceReference && (
+        <p className="mt-1 text-[9px] leading-relaxed text-stone-500">{t('reviewReferencePrefix')} {finding.evidenceReference}</p>
+      )}
+      <div className="mt-2 min-w-0 border-t border-stone-200 pt-2">
+        <p className="w-full text-left text-[10px] leading-relaxed text-forest-800 [overflow-wrap:anywhere]">
+          {finding.suggestion
+            ? <>{t('reviewSuggestionPrefix')} <strong>{finding.suggestion}</strong></>
+            : <>{t('reviewSuggestionPrefix')} {t('reviewSuggestionFallback')}</>}
+        </p>
+        {statusMessage && <p role="status" className="mt-2 border-l-2 border-copper bg-copper-50/70 px-2 py-1.5 text-[9px] leading-relaxed text-copper-900">{statusMessage}</p>}
+        {!citationId && (
+          <p className="mt-2 text-[9px] leading-relaxed text-copper-800">{t('reviewPlaceholderDraftOnly')}</p>
+        )}
+        {finding.evidenceStatus === 'matched' && citationId && (
+          <p className="mt-2 text-[9px] leading-relaxed text-forest-800">{t('reviewVerifiedCatalogueAvailable')} {citationId}.</p>
+        )}
+        <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+          {([
+            ['safe', t('reviewApplySafeRewrite')],
+            ['evidence', citationId
+              ? `${t('reviewInsertVerifiedCitation')} · ${citationId}`
+              : t('reviewInsertEvidencePlaceholder')],
+          ] as const).map(([mode, label]) => {
+            const applied = appliedModes.includes(`${finding.id}:${mode}`);
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => onApply(mode)}
+                disabled={applied}
+                title={applied ? t('reviewRewriteAppliedTitle') : label}
+                className="inline-flex shrink-0 items-center gap-1 border border-forest-300 bg-forest-50 px-2 py-1 text-[8px] font-mono uppercase tracking-wider text-forest-800 hover:bg-forest-100 disabled:cursor-default disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
+              >
+                {applied ? <Check className="h-3 w-3" /> : null}
+                {applied ? t('reviewApplied') : label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </article>
+  );
+};

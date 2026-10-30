@@ -1,4 +1,5 @@
 import {
+  ReviewAttachment,
   ReviewDecision,
   ReviewFinding,
   ReviewRecord,
@@ -7,6 +8,7 @@ import {
   ReviewSubmission,
   ReviewWorkflowStatus,
 } from '@/types/review';
+import { dispatchStorageUpdated, getScopedStorageKey } from '@/services/storageScope';
 
 export const REVIEW_RECORDS_STORAGE_KEY = 'brandlens.reviewRecords.v1';
 export const REVIEW_RECORDS_UPDATED_EVENT = 'brandlens:review-records-updated';
@@ -63,6 +65,20 @@ const isStatusEvent = (value: unknown): boolean => {
     && (value.note === undefined || typeof value.note === 'string');
 };
 
+export const isReviewAttachment = (value: unknown): value is ReviewAttachment => {
+  if (!isRecordObject(value)) return false;
+  return typeof value.id === 'string'
+    && typeof value.workspaceId === 'string'
+    && typeof value.reviewId === 'string'
+    && typeof value.revision === 'number'
+    && typeof value.fileName === 'string'
+    && typeof value.contentType === 'string'
+    && typeof value.fileSize === 'number'
+    && typeof value.storagePath === 'string'
+    && typeof value.uploadedBy === 'string'
+    && typeof value.createdAt === 'string';
+};
+
 const isRevisionSnapshot = (value: unknown): boolean => {
   if (!isRecordObject(value)) return false;
   return typeof value.revision === 'number'
@@ -74,7 +90,8 @@ const isRevisionSnapshot = (value: unknown): boolean => {
     && typeof value.status === 'string'
     && (WORKFLOW_STATUSES.includes(value.status as ReviewWorkflowStatus) || value.status === 'pending' || value.status === 'revision_requested')
     && typeof value.submittedAt === 'string'
-    && (value.title === undefined || typeof value.title === 'string');
+    && (value.title === undefined || typeof value.title === 'string')
+    && (value.attachments === undefined || value.attachments === null || (Array.isArray(value.attachments) && value.attachments.every(isReviewAttachment)));
 };
 
 const isDecisionRecord = (value: unknown): boolean => {
@@ -85,7 +102,8 @@ const isDecisionRecord = (value: unknown): boolean => {
     && typeof value.decidedAt === 'string'
     && typeof value.revision === 'number'
     && typeof value.contentHash === 'string'
-    && typeof value.content === 'string';
+    && typeof value.content === 'string'
+    && (value.legacyLocalUnverified === undefined || typeof value.legacyLocalUnverified === 'boolean');
 };
 
 const isReviewRecord = (value: unknown): value is ReviewRecord => {
@@ -113,7 +131,10 @@ const isReviewRecord = (value: unknown): value is ReviewRecord => {
     && (record.analysisConfigHash === undefined || typeof record.analysisConfigHash === 'string')
     && (record.statusHistory === undefined || (Array.isArray(record.statusHistory) && record.statusHistory.every(isStatusEvent)))
     && (record.revisionHistory === undefined || (Array.isArray(record.revisionHistory) && record.revisionHistory.every(isRevisionSnapshot)))
-    && (record.decisionHistory === undefined || (Array.isArray(record.decisionHistory) && record.decisionHistory.every(isDecisionRecord)));
+    && (record.decisionHistory === undefined || (Array.isArray(record.decisionHistory) && record.decisionHistory.every(isDecisionRecord)))
+    && (record.legacyApprovalUntrusted === undefined || typeof record.legacyApprovalUntrusted === 'boolean')
+    && (record.legacyImportNeedsAnalysis === undefined || typeof record.legacyImportNeedsAnalysis === 'boolean')
+    && (record.attachments === undefined || record.attachments === null || (Array.isArray(record.attachments) && record.attachments.every(isReviewAttachment)));
 };
 
 export const hashReviewContent = (content: string): string => {
@@ -194,6 +215,7 @@ const migrateRecord = (legacy: ReviewRecord): ReviewRecord => {
           }]
         : []
     ),
+    attachments: (Array.isArray(legacy.attachments) ? legacy.attachments : []).filter(isReviewAttachment),
     approvedRevision: legacy.approvedRevision ?? (legacyStatus === 'approved' ? revision : undefined),
     approvedContentHash: legacy.approvedContentHash ?? (legacyStatus === 'approved' ? contentHash : undefined),
   };
@@ -229,12 +251,12 @@ const pushStatus = (
 };
 
 const writeReviewRecords = (records: ReviewRecord[]): void => {
-  window.localStorage.setItem(REVIEW_RECORDS_STORAGE_KEY, JSON.stringify(records));
-  window.dispatchEvent(new Event(REVIEW_RECORDS_UPDATED_EVENT));
+  window.localStorage.setItem(getScopedStorageKey(REVIEW_RECORDS_STORAGE_KEY), JSON.stringify(records));
+  dispatchStorageUpdated(REVIEW_RECORDS_UPDATED_EVENT);
 };
 
 export const readReviewRecords = (): ReviewRecord[] => {
-  const rawRecords = window.localStorage.getItem(REVIEW_RECORDS_STORAGE_KEY);
+  const rawRecords = window.localStorage.getItem(getScopedStorageKey(REVIEW_RECORDS_STORAGE_KEY));
   if (rawRecords === null) return [];
 
   let parsed: unknown;
@@ -266,6 +288,41 @@ const createRecordId = (): string => (
     ? `DOC-${window.crypto.randomUUID().slice(0, 8).toUpperCase()}`
     : `DOC-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 );
+
+
+export const createReviewDraftRecord = (
+  submission: ReviewSubmission,
+  analysisConfigHash: string,
+): ReviewRecord => {
+  const records = readReviewRecords();
+  const now = new Date().toISOString();
+  const contentHash = hashReviewContent(submission.content);
+  const record: ReviewRecord = {
+    id: createRecordId(),
+    title: submission.title || 'Untitled Draft',
+    contentType: submission.contentType || 'Social post',
+    campaign: submission.campaign || '',
+    author: submission.author || 'Workspace editor',
+    submittedAt: now,
+    originalContent: submission.content,
+    currentContent: submission.content,
+    suggestedContent: submission.content,
+    score: 0,
+    findings: [],
+    status: 'draft',
+    aiSummary: 'Draft content awaiting local analysis.',
+    revision: 1,
+    contentHash,
+    analysisContentHash: '',
+    analysisConfigHash,
+    statusHistory: [{ status: 'draft', at: now, actor: submission.author || 'Workspace editor', revision: 1 }],
+    revisionHistory: [],
+    decisionHistory: [],
+    attachments: [],
+  };
+  writeReviewRecords([record, ...records]);
+  return record;
+};
 
 export const saveReviewRecord = (
   submission: ReviewSubmission,
@@ -356,6 +413,7 @@ export const resubmitReviewRecord = (
     findings: existing.findings,
     status: existing.status,
     submittedAt: existing.submittedAt,
+    attachments: (existing.attachments ?? []).filter((att) => att.revision === existing.revision),
   };
   const revised: ReviewRecord = {
     ...existing,
@@ -408,7 +466,14 @@ export const saveReviewDraft = (
     || contentType !== existing.contentType
     || campaign !== existing.campaign
     || author !== existing.author;
-  if (!hasChanges && !forceRevision) return existing;
+  if (
+  !hasChanges &&
+  !forceRevision &&
+  existing.status !== 'approved' &&
+  existing.status !== 'changes_requested'
+) {
+  return existing;
+}
 
   const contentHash = hashReviewContent(content);
   const isNewRevision = existing.status !== 'draft';
@@ -512,4 +577,40 @@ export const updateReviewRecord = (
   nextRecords[index] = updatedRecord;
   writeReviewRecords(nextRecords);
   return updatedRecord;
+};
+
+export const attachFileToReviewRecord = (attachment: ReviewAttachment): ReviewRecord => {
+  const records = readReviewRecords();
+  const index = records.findIndex((record) => record.id === attachment.reviewId);
+  if (index < 0) {
+    throw new Error(`Review record ${attachment.reviewId} was not found in local storage.`);
+  }
+  const existing = records[index];
+  const existingAttachments = existing.attachments ?? [];
+  const nextAttachments = [
+    ...existingAttachments.filter((att) => att.id !== attachment.id),
+    attachment,
+  ];
+  const updated: ReviewRecord = {
+    ...existing,
+    attachments: nextAttachments,
+  };
+  writeReviewRecords(records.map((r, i) => (i === index ? updated : r)));
+  return updated;
+};
+
+export const removeAttachmentFromReviewRecord = (reviewId: string, attachmentId: string): ReviewRecord => {
+  const records = readReviewRecords();
+  const index = records.findIndex((record) => record.id === reviewId);
+  if (index < 0) {
+    throw new Error(`Review record ${reviewId} was not found in local storage.`);
+  }
+  const existing = records[index];
+  const existingAttachments = existing.attachments ?? [];
+  const updated: ReviewRecord = {
+    ...existing,
+    attachments: existingAttachments.filter((att) => att.id !== attachmentId),
+  };
+  writeReviewRecords(records.map((r, i) => (i === index ? updated : r)));
+  return updated;
 };

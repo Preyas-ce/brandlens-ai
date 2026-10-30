@@ -1,6 +1,21 @@
 node_modules/
 dist/
 .vercel/
+
 .env
 .env.*
 !.env.example
+
+# Local Supabase CLI state and potentially sensitive files
+supabase/.temp/
+supabase/.branches/
+
+# Local testing scripts and screenshots
+/scratch/
+
+# Temporary patch scripts and backups
+/BrandLens-*/
+/APPLY-*.mjs
+/APPLY-*.mjs.before-*.bak
+/APPLY.md
+/README-Overview-Language-Patch.txt

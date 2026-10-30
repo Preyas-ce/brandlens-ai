@@ -14,9 +14,12 @@ import {
   X
 } from 'lucide-react';
 import { Brandmark } from '../brand/Brandmark';
+import { SidebarDemoStudio } from '../brand/SidebarDemoStudio';
 import { NavItem, NavGroup } from '@/types/navigation';
 import { Badge } from '../ui/Badge';
 import { readReviewRecords, REVIEW_RECORDS_STORAGE_KEY, REVIEW_RECORDS_UPDATED_EVENT } from '@/services/reviewStorage';
+import { getScopedStorageKey } from '@/services/storageScope';
+import { useLanguage } from '@/contexts/LanguageProvider';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -105,6 +108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen = false,
   onCloseMobile,
 }) => {
+  const { t } = useLanguage();
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
   const [queueLoadError, setQueueLoadError] = useState('');
 
@@ -120,7 +124,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     refreshPendingCount();
     window.addEventListener(REVIEW_RECORDS_UPDATED_EVENT, refreshPendingCount);
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === REVIEW_RECORDS_STORAGE_KEY) refreshPendingCount();
+      if (event.key === getScopedStorageKey(REVIEW_RECORDS_STORAGE_KEY)) refreshPendingCount();
     };
     window.addEventListener('storage', handleStorage);
     return () => {
@@ -155,8 +159,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Main Vertical Sidebar */}
       <aside
-        aria-label="Editorial Governance Navigation"
-        className={`fixed md:sticky top-0 left-0 z-40 h-screen bg-obsidian text-ivory flex flex-col border-r border-obsidian-800 transition-all duration-200 select-none ${
+        aria-label={t('navAriaLabel')}
+        className={`fixed md:sticky top-0 left-0 z-40 h-screen md:h-[100dvh] min-h-screen md:min-h-[100dvh] md:max-h-[100dvh] shrink-0 self-stretch bg-obsidian text-ivory flex flex-col border-r border-obsidian-800 transition-all duration-200 select-none ${
           collapsed ? 'w-20' : 'w-64'
         } ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
@@ -176,7 +180,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {mobileOpen && (
             <button
               onClick={onCloseMobile}
-              aria-label="Close navigation"
+              aria-label={t('closeNavigation')}
               className="p-1.5 rounded-[2px] text-stone-400 hover:text-ivory hover:bg-obsidian-800 md:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
               <X className="w-5 h-5" />
@@ -191,7 +195,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {/* Group Section Header */}
               {!collapsed ? (
                 <div className="px-2 mb-1.5 text-[9px] uppercase font-mono font-semibold tracking-[0.2em] text-stone-500">
-                  {group.title}
+                  {group.id === 'workbench' ? t('groupWorkbench') : group.id === 'governance' ? t('groupGovernance') : t('groupSystem')}
                 </div>
               ) : (
                 <div className="text-center text-stone-600 text-[10px] mb-1 font-mono">
@@ -202,6 +206,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {/* Group Nav Items */}
               {group.items.map((item) => {
                 const Icon = item.icon;
+                const label = item.id === 'dashboard' ? t('navOverview')
+                  : item.id === 'review' ? t('navContentWorkbench')
+                  : item.id === 'guidelines' ? t('navBrandGuidelines')
+                  : item.id === 'approvals' ? t('navVerificationGate')
+                  : item.id === 'activity' ? t('navActivity')
+                  : item.id === 'history' ? t('navAuditRecords')
+                  : item.id === 'settings' ? t('navSettings') : item.label;
                 const badge = item.id === 'approvals' && pendingReviewCount > 0
                   ? String(pendingReviewCount)
                   : item.badge;
@@ -209,7 +220,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <NavLink
                     key={item.id}
                     to={item.path}
-                    title={collapsed ? item.label : undefined}
+                    title={collapsed ? label : undefined}
                     className={({ isActive }) =>
                       `group flex items-center gap-3 py-2 text-xs font-sans rounded-[2px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60 ${
                         isActive
@@ -230,7 +241,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         />
                         {!collapsed && (
                           <div className="flex-1 flex items-center justify-between truncate">
-                            <span className="truncate">{item.label}</span>
+                            <span className="truncate">{label}</span>
                             {badge && (
                               <span
                                 className={`ml-2 px-1.5 py-0.5 text-[10px] font-mono font-bold rounded-[2px] ${
@@ -251,6 +262,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               })}
             </div>
           ))}
+
+          {/* Demo Studio Panel in remaining vertical space */}
+          <div className="pt-2">
+            <SidebarDemoStudio
+              collapsed={collapsed}
+              onNavigate={onCloseMobile}
+            />
+          </div>
         </nav>
 
         {queueLoadError && !collapsed && (
@@ -270,20 +289,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     Human Gate Active
                   </span>
                 </div>
-                <Badge variant="forest" size="sm" dot>Enforced</Badge>
+                <Badge variant="forest" size="sm" dot>{t('enforced')}</Badge>
               </div>
 
               <p className="text-[11px] text-stone-400 leading-snug">
-                AI evaluation is strictly advisory; publication requires a recorded human reviewer decision.
+                {t('humanGateDescription')}
               </p>
 
               <div className="pt-2 border-t border-obsidian-700/60 flex items-center justify-between text-[9px] font-mono uppercase tracking-widest text-stone-500">
-                <span>Deterministic v0.1</span>
-                <span className="text-forest-300">Offline Safe</span>
+                <span>{t('deterministicVersion')}</span>
+                <span className="text-forest-300">{t('offlineSafe')}</span>
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-2 py-1" title="Human Verification Gate: Active (Deterministic Local Mode)">
+            <div className="flex flex-col items-center gap-2 py-1" title={t('humanGateActive')}>
               <span className="w-2.5 h-2.5 rounded-full bg-copper ring-4 ring-copper/20 animate-pulse" />
             </div>
           )}
@@ -291,7 +310,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Desktop Collapse / Expand Toggle */}
           <button
             onClick={onToggleCollapse}
-            aria-label={collapsed ? 'Expand sidebar navigation' : 'Collapse sidebar navigation'}
+            aria-label={collapsed ? t('expandSidebar') : t('collapseSidebar')}
             className="hidden md:flex mt-2.5 w-full items-center justify-center gap-2 py-1.5 rounded-[2px] text-xs text-stone-400 hover:text-ivory hover:bg-obsidian-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
           >
             {collapsed ? (
@@ -300,7 +319,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <>
                 <ChevronLeft className="w-4 h-4" />
                 <span className="text-[11px] font-mono uppercase tracking-wider text-stone-400">
-                  Collapse Sidebar
+                  {t('collapseSidebar')}
                 </span>
               </>
             )}

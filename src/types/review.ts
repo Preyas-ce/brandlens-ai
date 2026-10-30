@@ -71,6 +71,20 @@ export interface ReviewDecisionRecord {
   contentHash: string;
   content: string;
   suggestedDraft?: string;
+  legacyLocalUnverified?: boolean;
+}
+
+export interface ReviewAttachment {
+  id: string;
+  workspaceId: string;
+  reviewId: string;
+  revision: number;
+  fileName: string;
+  contentType: string;
+  fileSize: number;
+  storagePath: string;
+  uploadedBy: string;
+  createdAt: string;
 }
 
 export interface ReviewRevisionSnapshot {
@@ -82,6 +96,7 @@ export interface ReviewRevisionSnapshot {
   findings: ReviewFinding[];
   status: ReviewWorkflowStatus;
   submittedAt: string;
+  attachments?: ReviewAttachment[];
 }
 
 export interface ReviewRecord {
@@ -106,11 +121,14 @@ export interface ReviewRecord {
   statusHistory: ReviewStatusEvent[];
   revisionHistory: ReviewRevisionSnapshot[];
   decisionHistory: ReviewDecisionRecord[];
+  attachments?: ReviewAttachment[];
   signedBy?: string;
   signedNote?: string;
   verifiedAt?: string;
   approvedRevision?: number;
   approvedContentHash?: string;
+  legacyApprovalUntrusted?: boolean;
+  legacyImportNeedsAnalysis?: boolean;
 }
 
 export interface ReviewSubmission {

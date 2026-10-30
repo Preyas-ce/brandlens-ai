@@ -12,6 +12,7 @@ import {
   UserRoundCheck,
   Pause,
   Play,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -22,8 +23,13 @@ import { getWorkspaceAnalysisConfigHash, WORKSPACE_DATA_STORAGE_KEY, WORKSPACE_D
 import { ILLUMINATION_REPLAY_EVENT } from '@/services/uiPreferences';
 import { ReviewRecord } from '@/types/review';
 import { RiskSpotlight, SystemShowcase, GovernanceDeck, KineticCallToAction } from '@/components/brand/OverviewExperience';
+import { DemoScenariosGallery } from '@/components/brand/DemoScenariosGallery';
 import { MOTION_PAUSE_EVENT, QUICK_SCAN_OPEN_EVENT } from '@/services/uiPreferences';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { getScopedStorageKey } from '@/services/storageScope';
+import { useLanguage } from '@/contexts/LanguageProvider';
+import { EAGLE_TOUR_TRIGGER_EVENT } from '@/contexts/EagleTourContext';
+import { EagleJourneyMap } from '@/components/brand/EagleJourneyMap';
 
 type ReviewStatus = 'awaiting_review' | 'revision_requested' | 'approved' | 'rejected' | 'draft';
 type IssueSeverity = 'critical' | 'warning' | 'advisory';
@@ -58,6 +64,7 @@ const STATUS_STYLES: Record<ReviewStatus, string> = {
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [liveRecords, setLiveRecords] = useState<ReviewRecord[]>([]);
   const [analysisConfigHash, setAnalysisConfigHash] = useState('');
   const [recordsError, setRecordsError] = useState('');
@@ -75,14 +82,14 @@ export const DashboardPage: React.FC = () => {
         setAnalysisConfigHash(getWorkspaceAnalysisConfigHash());
         setRecordsError('');
       } catch (error) {
-        setRecordsError(error instanceof Error ? error.message : 'Local review records could not be loaded.');
+        setRecordsError(error instanceof Error ? error.message : 'Workspace review records could not be loaded.');
       }
     };
     refreshRecords();
     window.addEventListener(REVIEW_RECORDS_UPDATED_EVENT, refreshRecords);
     window.addEventListener(WORKSPACE_DATA_UPDATED_EVENT, refreshRecords);
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === REVIEW_RECORDS_STORAGE_KEY || event.key === WORKSPACE_DATA_STORAGE_KEY) refreshRecords();
+      if (event.key === getScopedStorageKey(REVIEW_RECORDS_STORAGE_KEY) || event.key === getScopedStorageKey(WORKSPACE_DATA_STORAGE_KEY)) refreshRecords();
     };
     window.addEventListener('storage', handleStorage);
     return () => {
@@ -152,25 +159,57 @@ export const DashboardPage: React.FC = () => {
           title={prefersReducedMotion ? 'Reduced motion preference is active' : undefined}
         >
           {pauseAllMotion ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-          {prefersReducedMotion ? 'Reduced motion' : pauseAllMotion ? 'Resume motion' : 'Pause motion'}
+          {prefersReducedMotion ? t('dashboardReducedMotion') : pauseAllMotion ? t('dashboardResumeMotion') : t('dashboardPauseMotion')}
         </button>
       </div>
-      <section className="grid grid-cols-1 items-center gap-6 border-b border-stone-300 pb-7 lg:grid-cols-[minmax(0,1.55fr)_minmax(19rem,0.75fr)] lg:gap-8">
+
+      {/* 6-Stage Journey Map Overview Banner */}
+      <section className="rounded-sm border border-stone-300 bg-ivory-50/90 p-4 sm:p-5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">
+                00 / {t('tourConnectedJourney') || 'The BrandLens Journey'}
+              </span>
+              <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded-xs bg-forest/15 text-forest font-semibold">
+                6-Stage Interactive Roadmap
+              </span>
+            </div>
+            <h3 className="mt-1 font-serif text-lg font-semibold text-obsidian">
+              {t('tourConnectedSubtitle') || '6 simple steps. A smarter way to review.'}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent(EAGLE_TOUR_TRIGGER_EVENT, { detail: { step: 1 } }))}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xs border border-copper bg-copper text-ivory text-xs font-semibold hover:bg-copper-600 transition-colors shadow-xs active:scale-[0.98]"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>{t('tourStartGuidedDemo') || 'Start Guided Demo'}</span>
+          </button>
+        </div>
+        <EagleJourneyMap
+          activeStep={1}
+          onSelectStep={(step) => window.dispatchEvent(new CustomEvent(EAGLE_TOUR_TRIGGER_EVENT, { detail: { step } }))}
+        />
+      </section>
+
+      <section data-tour="overview-hero" className="grid grid-cols-1 items-center gap-6 border-b border-stone-300 pb-7 lg:grid-cols-[minmax(0,1.55fr)_minmax(19rem,0.75fr)] lg:gap-8">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">
-              Brand governance · At a glance
+              {t('dashboardBrandGovernanceAtAGlance')}
             </span>
             <span className="inline-flex items-center gap-1.5 border border-stone-300 bg-ivory-50/80 px-2 py-1 text-[9px] font-mono uppercase tracking-[0.14em] text-stone-600">
               <span className="h-1.5 w-1.5 rounded-full bg-forest" aria-hidden="true" />
-              Local review records
+              {t('dashboardWorkspaceReviewRecords')}
             </span>
           </div>
           <h2 className="max-w-2xl font-serif text-4xl font-normal leading-[1.05] tracking-tight text-obsidian sm:text-5xl lg:text-[3.5rem]">
-            Every word. On brand. Before it goes live.
+            {t('dashboardHeroHeadline')}
           </h2>
           <p className="max-w-xl text-sm leading-relaxed text-stone-700 sm:text-base">
-            BrandLens AI checks content against your brand rules and approved evidence, then routes it through human review before publication.
+            {t('dashboardHeroDescription')}
           </p>
           <div className="flex flex-wrap items-center gap-3 pt-1">
             <Button
@@ -180,46 +219,74 @@ export const DashboardPage: React.FC = () => {
               rightIcon={<ArrowUpRight className="h-3.5 w-3.5" />}
               onClick={() => navigate('/review')}
             >
-              Start Content Review
+              {t('dashboardStartContentReview')}
+            </Button>
+            <Button
+              variant="outline"
+              size="md"
+              leftIcon={<BookOpenCheck className="h-4 w-4 text-copper" />}
+              onClick={() => {
+                const el = document.getElementById('demo-scenarios-gallery');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+                else navigate('/review');
+              }}
+            >
+              {t('dashboardExploreDemoReviews')}
             </Button>
             <button
               type="button"
               onClick={() => navigate('/guidelines')}
               className="inline-flex items-center gap-1.5 rounded-sm px-2 py-2 text-xs font-medium text-stone-700 transition-colors hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
-              Browse brand rules <ArrowRight className="h-3.5 w-3.5" />
+              {t('dashboardBrowseBrandRules')} <ArrowRight className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={() => window.dispatchEvent(new Event(ILLUMINATION_REPLAY_EVENT))}
-              title="Replay the BrandLens illumination introduction"
+              title={t('dashboardReplayIlluminationTitle')}
               className="inline-flex items-center gap-1.5 rounded-sm border border-stone-300 bg-ivory-50 px-2.5 py-2 text-[10px] font-mono uppercase tracking-wider text-stone-600 transition duration-150 hover:-translate-y-px hover:border-copper hover:text-obsidian hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60 active:scale-[0.98]"
             >
-              Replay illumination
+              {t('dashboardReplayIllumination')}
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent(EAGLE_TOUR_TRIGGER_EVENT, { detail: { step: 1 } }))}
+              title={t('tourReplayTitle') || 'Replay the interactive 6-step BrandLens guide'}
+              className="inline-flex items-center gap-1.5 rounded-sm border border-copper/50 bg-copper/10 px-2.5 py-2 text-[10px] font-mono uppercase tracking-wider text-copper-900 font-semibold transition duration-150 hover:-translate-y-px hover:border-copper hover:bg-copper/20 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60 active:scale-[0.98]"
+            >
+              <span className="h-2 w-2 rounded-full bg-copper shrink-0" aria-hidden="true" />
+              <span>{t('tourReplay') || 'Replay Guided Tour'}</span>
             </button>
           </div>
           <div className="flex items-center gap-2 border-t border-copper/30 pt-3 text-[10px] text-stone-600">
             <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-forest" aria-hidden="true" />
-            <span>AI analysis is advisory. A named human reviewer retains final approval.</span>
+            <span>{t('dashboardHumanApprovalNotice')}</span>
           </div>
         </div>
         <BrandOrbit records={liveRecords} motionPaused={pauseAllMotion} />
       </section>
+
+      <DemoScenariosGallery
+        records={liveRecords}
+        onScenariosPrepared={() => {
+          setLiveRecords(readReviewRecords());
+        }}
+      />
 
       <RiskSpotlight
         paused={pauseAllMotion}
         onTest={(sample) => navigate(`/review?spotlight=${encodeURIComponent(sample)}`)}
       />
 
-      <section aria-labelledby="brand-health-heading">
-        {recordsError && <p role="alert" className="mb-3 border-l-2 border-copper bg-copper-50 px-3 py-2 text-xs text-copper-900">Live review records could not be loaded: {recordsError}</p>}
+      <section data-tour="overview-metrics" aria-labelledby="brand-health-heading">
+        {recordsError && <p role="alert" className="mb-3 border-l-2 border-copper bg-copper-50 px-3 py-2 text-xs text-copper-900">{t('dashboardRecordsLoadError')}: {recordsError}</p>}
         <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
           <div>
-            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">01 / Brand health</p>
-            <h3 id="brand-health-heading" className="mt-1 font-serif text-2xl text-obsidian">Consistency, with evidence.</h3>
+            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">01 / {t('dashboardBrandHealth')}</p>
+            <h3 id="brand-health-heading" className="mt-1 font-serif text-2xl text-obsidian">{t('dashboardConsistencyWithEvidence')}</h3>
           </div>
           <p className="text-[10px] font-mono uppercase tracking-wider text-stone-500">
-            Calculated from {localReviews.length} saved review records
+            {t('dashboardCalculatedFrom')} {localReviews.length} {t('dashboardSavedReviewRecords')}
           </p>
         </div>
 
@@ -235,7 +302,7 @@ export const DashboardPage: React.FC = () => {
         />
         <div className="mt-2 flex items-center justify-between gap-4">
           <p className="text-[10px] leading-relaxed text-stone-500">
-            Every metric comes from shared local review records. Prepare the marked demo submissions in Settings to explore the full workflow.
+            {t('dashboardMetricFootnote')}
           </p>
           {localReviews.length === 0 && (
             <button
@@ -243,7 +310,7 @@ export const DashboardPage: React.FC = () => {
               onClick={() => navigate('/settings')}
               className="shrink-0 text-[10px] font-mono uppercase tracking-wider text-copper-800 underline decoration-copper/40 underline-offset-2 hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
-              Prepare demo records
+              {t('dashboardPrepareDemoRecords')}
             </button>
           )}
         </div>
@@ -254,44 +321,44 @@ export const DashboardPage: React.FC = () => {
       <section aria-labelledby="pipeline-heading" className="border-y border-stone-300 bg-ivory-100/55 px-4 py-5 sm:px-6">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">02 / Verification pipeline</p>
-            <h3 id="pipeline-heading" className="mt-1 font-serif text-2xl text-obsidian">From draft to decision.</h3>
+            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">02 / {t('dashboardVerificationPipeline')}</p>
+            <h3 id="pipeline-heading" className="mt-1 font-serif text-2xl text-obsidian">{t('dashboardFromDraftToDecision')}</h3>
           </div>
-          <p className="text-[10px] text-stone-500">A person always owns the final call.</p>
+          <p className="text-[10px] text-stone-500">{t('dashboardFinalCall')}</p>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 lg:gap-0">
           <PipelineStep
             number="01"
-            title="AI Content Analysis"
-            count={`${inspectedCount} analyzed`}
+            title={t('dashboardAIContentAnalysis')}
+            count={`${inspectedCount} ${t('dashboardAnalyzed')}`}
             icon={ScanSearch}
-            description="Run the local deterministic analysis against active brand rules and the evidence catalogue."
+            description={t('dashboardAIAnalysisDescription')}
             onClick={() => navigate('/review')}
           />
           <PipelineStep
             number="02"
-            title="Brand & Evidence Validation"
-            count={`${flaggedReviews} with findings`}
+            title={t('dashboardBrandEvidenceValidation')}
+            count={`${flaggedReviews} ${t('dashboardWithFindings')}`}
             icon={BookOpenCheck}
-            description="Explore active guidelines and the sources used to validate claims."
+            description={t('dashboardEvidenceValidationDescription')}
             onClick={() => navigate('/guidelines?tab=evidence')}
           />
           <PipelineStep
             number="03"
-            title="Human Verification"
-            count={`${pendingReviews.length} awaiting review`}
+            title={t('dashboardHumanVerification')}
+            count={`${pendingReviews.length} ${t('dashboardAwaitingReview')}`}
             icon={UserRoundCheck}
             featured
-            description="Open the human review queue. A named reviewer makes every final decision."
+            description={t('dashboardHumanVerificationDescription')}
             onClick={() => navigate('/approvals')}
           />
           <PipelineStep
             number="04"
-            title="Publication Approval"
-            count={`${approvedReviews.length} approved`}
+            title={t('dashboardPublicationApproval')}
+            count={`${approvedReviews.length} ${t('dashboardApproved')}`}
             icon={ShieldCheck}
             last
-            description="View review records with a human approval decision."
+            description={t('dashboardPublicationApprovalDescription')}
             onClick={() => navigate('/approvals?filter=approved')}
           />
         </div>
@@ -302,25 +369,25 @@ export const DashboardPage: React.FC = () => {
       <section aria-labelledby="review-queue-heading">
           <div className="mb-4 flex items-end justify-between gap-3">
             <div>
-              <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">03 / Review queue</p>
-              <h3 id="review-queue-heading" className="mt-1 font-serif text-2xl text-obsidian">Submissions in motion</h3>
+              <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-copper">03 / {t('dashboardReviewQueue')}</p>
+              <h3 id="review-queue-heading" className="mt-1 font-serif text-2xl text-obsidian">{t('dashboardSubmissionsInMotion')}</h3>
             </div>
             <button
               type="button"
               onClick={() => navigate('/approvals')}
               className="inline-flex shrink-0 items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-stone-600 hover:text-obsidian focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-copper/60"
             >
-              Open queue <ArrowRight className="h-3 w-3" />
+              {t('dashboardOpenQueue')} <ArrowRight className="h-3 w-3" />
             </button>
           </div>
           <div className="border-t-2 border-obsidian">
             {activeReviews.length === 0 ? (
               <EmptyState
-                kicker="REVIEW QUEUE"
-                title="Nothing waiting for review"
-                description="There are no saved local submissions in the active queue. Start a review or prepare the marked demo submissions in Settings."
+                kicker={t('dashboardReviewQueueKicker')}
+                title={t('dashboardNothingWaiting')}
+                description={t('dashboardEmptyQueueDescription')}
                 icon={<Check className="h-5 w-5 text-forest" />}
-                action={{ label: 'Start Content Review', onClick: () => navigate('/review') }}
+                action={{ label: t('dashboardStartContentReview'), onClick: () => navigate('/review') }}
                 className="my-4"
               />
             ) : (
@@ -333,8 +400,8 @@ export const DashboardPage: React.FC = () => {
               ))
             )}
             <div className="flex items-center justify-between border-t border-stone-200 pt-3 text-[10px] text-stone-500">
-              <span>{activeReviews.length} active local submissions</span>
-              <span className="font-mono uppercase tracking-wider">Critical · Warning · Advisory</span>
+              <span>{activeReviews.length} {t('dashboardActiveLocalSubmissions')}</span>
+              <span className="font-mono uppercase tracking-wider">{t('dashboardCriticalWarningAdvisory')}</span>
             </div>
           </div>
       </section>

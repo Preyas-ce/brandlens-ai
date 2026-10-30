@@ -124,7 +124,7 @@
   }
 
   .illumination-halo {
-    background: radial-gradient(ellipse at 69% 56%, rgba(230, 176, 112, 0.28), transparent 0 9%, rgba(188, 116, 78, 0.08) 18%, transparent 39%);
+    background: radial-gradient(ellipse at 50% 50%, rgba(230, 176, 112, 0.12) 0%, rgba(188, 116, 78, 0.04) 35%, transparent 70%);
     opacity: 0;
     transition: opacity 1s ease-out;
   }
@@ -168,6 +168,10 @@
     animation: lamp-cord-sway 1.2s ease-in-out infinite alternate;
   }
 
+  .lamp-illustration:has(.lamp-pull:hover) .lamp-cord-fob,
+  .lamp-illustration:has(.lamp-pull:focus-visible) .lamp-cord-fob,
+  .lamp-illustration:has(.lamp-pull:hover) svg ellipse[cx="250"],
+  .lamp-illustration:has(.lamp-pull:focus-visible) svg ellipse[cx="250"],
   .lamp-illustration:has(.lamp-pull:hover) svg ellipse[cx="260"],
   .lamp-illustration:has(.lamp-pull:focus-visible) svg ellipse[cx="260"] {
     filter: drop-shadow(0 0 8px rgba(188, 116, 78, 0.75));
@@ -360,5 +364,51 @@
   input[type='checkbox'] {
     accent-color: #BC744E;
     border-radius: 2px;
+  }
+
+  /* Eagle Mascot flight animation keyframes */
+  @keyframes eagleFlightPerimeter {
+    0% {
+      transform: translate3d(260px, -180px, 0) scale(0.65) rotate(-16deg);
+      opacity: 0;
+    }
+    12% {
+      opacity: 1;
+    }
+    30% {
+      transform: translate3d(220px, 80px, 0) scale(0.9) rotate(-6deg);
+    }
+    55% {
+      transform: translate3d(-180px, 110px, 0) scale(1.05) rotate(14deg);
+    }
+    80% {
+      transform: translate3d(-190px, -40px, 0) scale(0.98) rotate(-4deg);
+    }
+    92% {
+      transform: translate3d(-30px, -15px, 0) scale(1.02) rotate(2deg);
+    }
+    100% {
+      transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+      opacity: 1;
+    }
+  }
+
+  @keyframes eagleSpeechFadeIn {
+    0% {
+      opacity: 0;
+      transform: translateY(6px) scale(0.96);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-eagle-flight {
+    animation: eagleFlightPerimeter 2.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .animate-speech-bubble {
+    animation: eagleSpeechFadeIn 0.35s ease-out forwards;
   }
 }
